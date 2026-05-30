@@ -1,0 +1,81 @@
+#ifndef RAWDB_DB_DATABASE_HPP
+#define RAWDB_DB_DATABASE_HPP
+
+#include <deque>
+#include <filesystem>
+#include <memory>
+#include <shared_mutex>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+#include "buffer/flush_handler.hpp"
+#include "core/error.hpp"
+#include "core/types.hpp"
+#include "mvcc/gc.hpp"
+#include "storage/table.hpp"
+
+namespace rawdb
+{
+
+class Database
+{
+public:
+    Database();
+    ~Database();
+
+    Database(const Database &) = delete;
+    auto operator=(const Database &) -> Database & = delete;
+
+    auto open(const std::filesystem::path &path) -> Status;
+
+    void close();
+
+    auto create_table(const std::string &name, Schema schema) -> StatusOr<TableId>;
+
+    auto insert(TableId table_id, const std::vector<ColumnData> &columns) -> Status;
+
+    auto delete_rows(TableId table_id, std::vector<RowId> row_ids) -> Status;
+
+    /// Compact table: remove tombstoned rows and rebuild indexes.
+    auto vacuum(TableId table_id) -> Status;
+
+    [[nodiscard]] auto table(TableId id) -> Table &
+    {
+        std::shared_lock lock(tables_mtx_);
+        if (id >= tables_.size()) {
+            throw std::out_of_range("Database::table: id=" + std::to_string(id) +
+                                    " >= size=" + std::to_string(tables_.size()));
+        }
+        return tables_[id];
+    }
+    [[nodiscard]] auto table_count() const -> size_t
+    {
+        std::shared_lock lock(tables_mtx_);
+        return tables_.size();
+    }
+
+    [[nodiscard]] auto tables_lock_shared() const { return std::shared_lock(tables_mtx_); }
+    [[nodiscard]] auto tables_lock_unique() { return std::unique_lock(tables_mtx_); }
+
+    [[nodiscard]] auto tables() -> std::deque<Table> & { return tables_; }
+    [[nodiscard]] auto tables() const -> const std::deque<Table> & { return tables_; }
+
+    [[nodiscard]] auto path() const -> const std::filesystem::path & { return path_; }
+
+    auto next_ts() -> Timestamp { return timestamps_.allocate_ts(); }
+
+private:
+    std::filesystem::path path_;
+    mutable std::shared_mutex tables_mtx_;
+    std::deque<Table> tables_;
+    std::unique_ptr<FlushHandler> flush_handler_;
+    TimestampAllocator timestamps_;
+    GlobalWatermarks watermarks_;
+    std::unique_ptr<GarbageCollector> gc_;
+    bool is_open_{false};
+};
+
+} // namespace rawdb
+
+#endif // RAWDB_DB_DATABASE_HPP

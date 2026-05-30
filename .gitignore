@@ -1,0 +1,24 @@
+# Build
+build/
+cmake-build-*/
+out/
+
+# Test & runtime artifacts
+*.raw
+*.idx
+*.vindex
+*.schema
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.cache/
+.clangd/
+compile_commands.json
+
+# OS
+.DS_Store
+Thumbs.db

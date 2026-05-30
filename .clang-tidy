@@ -1,0 +1,68 @@
+---
+Checks: >
+    *,
+    -llvmlibc-*,
+    -fuchsia-*,
+    -zircon-*,
+    -google-*,
+    -abseil-*,
+    -altera-*,
+    -clang-diagnostic-unused-command-line-argument,
+    -cppcoreguidelines-avoid-magic-numbers,
+    -readability-magic-numbers,
+    -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
+    -hicpp-no-array-decay,
+    -cppcoreguidelines-pro-type-vararg,
+    -hicpp-vararg,
+    -cppcoreguidelines-owning-memory,
+    -readability-function-cognitive-complexity,
+    -cppcoreguidelines-pro-bounds-constant-array-index,
+    -clang-analyzer-optin.core.EnumCastOutOfRange,
+    -hicpp-explicit-conversions,
+    -cppcoreguidelines-explicit-virtual-functions,
+    -hicpp-special-member-functions,
+    -cppcoreguidelines-special-member-functions,
+    -cert-err58-cpp,
+    -cert-dcl58-cpp,
+    -google-build-using-namespace,
+    -readability-identifier-length,
+    -misc-no-recursion,
+    -bugprone-easily-swappable-parameters,
+    -modernize-use-trailing-return-type,
+    -llvm-header-guard,
+    -readability-avoid-const-params-in-decls,
+    -cppcoreguidelines-macro-usage,
+    -modernize-macro-to-enum,
+    -cppcoreguidelines-avoid-non-const-global-variables,
+    -concurrency-mt-unsafe,
+
+CheckOptions:
+  - key: readability-identifier-naming.ClassCase
+    value: PascalCase
+  - key: readability-identifier-naming.StructCase
+    value: PascalCase
+  - key: readability-identifier-naming.EnumCase
+    value: PascalCase
+  - key: readability-identifier-naming.FunctionCase
+    value: camelBack
+  - key: readability-identifier-naming.VariableCase
+    value: lower_case
+  - key: readability-identifier-naming.MemberCase
+    value: lower_case
+  - key: readability-identifier-naming.MemberSuffix
+    value: _
+  - key: readability-identifier-naming.ConstantCase
+    value: UPPER_CASE
+  - key: readability-identifier-naming.ConstantPrefix
+    value: k
+  - key: readability-identifier-naming.ParameterCase
+    value: lower_case
+  - key: readability-identifier-naming.PrivateMemberSuffix
+    value: _
+  - key: readability-identifier-naming.ProtectedMemberSuffix
+    value: _
+  - key: readability-identifier-naming.GlobalVariableCase
+    value: lower_case
+  - key: readability-identifier-naming.GlobalVariablePrefix
+    value: g_
+...

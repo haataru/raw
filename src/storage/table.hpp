@@ -1,0 +1,159 @@
+#ifndef RAWDB_STORAGE_TABLE_HPP
+#define RAWDB_STORAGE_TABLE_HPP
+
+#include <cstddef>
+#include <cstdint>
+#include <filesystem>
+#include <memory>
+#include <shared_mutex>
+#include <string>
+#include <vector>
+
+#include "core/error.hpp"
+#include "core/types.hpp"
+#include "index/btree.hpp"
+#include "memory/mmap_file.hpp"
+#include "mvcc/version_index.hpp"
+#include "storage/page.hpp"
+
+namespace rawdb
+{
+
+struct Schema
+{
+    std::vector<ColumnType> columns;
+    std::vector<std::string> names;
+
+    [[nodiscard]] auto column_count() const -> size_t { return columns.size(); }
+};
+
+struct TableScanResult;
+
+class Table
+{
+public:
+    Table() = default;
+
+    explicit Table(std::string name, Schema schema);
+
+    Table(const Table &) = delete;
+    auto operator=(const Table &) -> Table & = delete;
+    Table(Table &&) = default;
+    auto operator=(Table &&) -> Table & = default;
+
+    [[nodiscard]] auto name() const -> const std::string & { return name_; }
+    [[nodiscard]] auto schema() const -> const Schema & { return schema_; }
+    [[nodiscard]] auto row_count() const -> size_t;
+
+    auto insert_row(Timestamp ts, const std::vector<ColumnData> &columns) -> Status;
+
+    auto insert_row(TimestampAllocator &timestamps,
+                    const std::vector<ColumnData> &columns) -> Status;
+
+    void flush_pending();
+
+    // ── Page read ──
+
+    [[nodiscard]] auto read_page(PageId page_id) const -> StatusOr<std::vector<std::byte>>;
+    [[nodiscard]] auto read_page_header(PageId page_id) const -> StatusOr<PageHeader>;
+
+    [[nodiscard]] auto lookup_page(RowId row_id) const -> StatusOr<PageId>;
+
+    auto open_file(const std::filesystem::path &db_path) -> Status;
+    void close_file();
+
+    [[nodiscard]] auto recover() -> Status;
+
+    /// Indexes must be rebuilt after this call (RowIds change).
+    auto prune_version_index(Timestamp cutoff_ts) -> size_t;
+
+    auto read_rows(const std::vector<RowId> &row_ids,
+                   const std::vector<size_t> &col_indices) -> StatusOr<TableScanResult>;
+
+    /// Locked VersionIndex operations.
+    [[nodiscard]] auto search_version_index(RowId row_id,
+                                            Timestamp max_ts) const -> StatusOr<uint64_t>;
+    [[nodiscard]] auto version_index_size() const -> size_t;
+    [[nodiscard]] auto version_index_max_ts() const -> Timestamp;
+    auto insert_version_entries(const IndexEntry *entries, size_t count) -> void;
+
+    [[nodiscard]] auto file() -> MmapFile & { return file_; }
+    [[nodiscard]] auto file() const -> const MmapFile & { return file_; }
+
+    auto sync() -> Status;
+
+    auto save_vindex(const std::filesystem::path &db_path) -> Status;
+
+    auto load_vindex(const std::filesystem::path &db_path) -> Status;
+
+    void rebuild_vindex_from_pages(TimestampAllocator &timestamps);
+
+    /// Indexes must be rebuilt after this call (RowIds change).
+    auto vacuum(TimestampAllocator &timestamps) -> StatusOr<size_t>;
+
+    void clear_indexes();
+
+    /// Lock for concurrent access (shared_mutex).
+    mutable std::unique_ptr<std::shared_mutex> rw_mtx{std::make_unique<std::shared_mutex>()};
+    [[nodiscard]] auto lock_shared() const { return std::shared_lock(*rw_mtx); }
+    [[nodiscard]] auto lock_unique() { return std::unique_lock(*rw_mtx); }
+
+    [[nodiscard]] auto has_indexes() const -> bool;
+
+    template <typename F>
+    auto for_each_index(F &&f) -> void
+    {
+        std::shared_lock lock(*rw_mtx);
+        for (auto &idx : indexes_) {
+            f(idx);
+        }
+    }
+
+    template <typename F>
+    auto for_each_index(F &&f) const -> void
+    {
+        std::shared_lock lock(*rw_mtx);
+        for (const auto &idx : indexes_) {
+            f(idx);
+        }
+    }
+
+    auto add_index(IndexInfo info) -> void;
+
+    static constexpr PageId kNotFoundPage = static_cast<PageId>(-1);
+    static constexpr size_t kBatchSize = 8192; // max rows per page
+
+private:
+    std::string name_;
+    Schema schema_;
+    size_t row_count_{0};
+    MmapFile file_;
+    bool file_open_{false};
+    VersionIndex version_index_;
+
+    struct RowRange
+    {
+        RowId start;
+        size_t count;
+        PageId page_id;
+    };
+    std::vector<RowRange> pages_;
+    std::vector<IndexInfo> indexes_;
+
+    // ── Pending batch buffer ──
+    struct PendingBatch
+    {
+        std::vector<std::vector<std::byte>> col_data;
+        std::vector<Timestamp> row_ts;
+        size_t row_count = 0;
+        RowId start_rid = 0;
+    };
+    PendingBatch pending_;
+
+    // Internal: write pending_ rows to a file page (caller holds unique_lock).
+    void write_pending_to_page();
+};
+
+} // namespace rawdb
+
+#endif // RAWDB_STORAGE_TABLE_HPP
