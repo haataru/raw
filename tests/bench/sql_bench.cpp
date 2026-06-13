@@ -105,6 +105,31 @@ static auto run_sql_benchmarks(bool /*quick*/) -> void
                   << " ms/query\n";
     }
 
+    // ── SELECT with SIMD Filter ──
+    {
+        // warmup
+        auto r = exec.execute("SELECT * FROM t WHERE id > 50000");
+        if (!r) {
+            std::cerr << "SELECT filter warmup failed\n";
+            std::exit(1);
+        }
+
+        auto start = clock::now();
+        for (int i = 0; i < kScanIters; ++i) {
+            r = exec.execute("SELECT * FROM t WHERE id > 50000");
+            if (!r) {
+                std::cerr << "SELECT filter failed\n";
+                std::exit(1);
+            }
+        }
+        auto ns =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now() - start).count();
+        double sec = static_cast<double>(ns) / 1e9;
+        std::cout << "bench_select_filter: " << kRowCount << " rows, "
+                  << static_cast<double>(kRowCount * kScanIters) / sec << " rows/sec, "
+                  << ns_to_ms(static_cast<int64_t>(ns / kScanIters)) << " ms/query\n";
+    }
+
     // ── CREATE INDEX + SELECT index lookup (detailed timing) ──
     {
         auto r = exec.execute("CREATE INDEX idx_id ON t (id)");

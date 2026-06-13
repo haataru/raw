@@ -1,4 +1,5 @@
 #include <cmath>
+#include "query/simd_ops.hpp"
 
 #include "query/executor.hpp"
 
@@ -92,24 +93,48 @@ auto Filter::evaluate(const std::vector<ColumnData> &columns,
 
     std::vector<size_t> result;
 
+    auto get_simd_op = [](CmpOp op) -> simd::Op {
+        switch (op) {
+            case CmpOp::kEq: return simd::Op::kEq;
+            case CmpOp::kGt: return simd::Op::kGt;
+            case CmpOp::kLt: return simd::Op::kLt;
+            case CmpOp::kGe: return simd::Op::kGe;
+            case CmpOp::kLe: return simd::Op::kLe;
+            default: return simd::Op::kEq; // Ne is not supported by fast path yet
+        }
+    };
+
     if (std::holds_alternative<int64_t>(pred.value.data)) {
         int64_t val = std::get<int64_t>(pred.value.data);
         if (col_type == ColumnType::kInt64) {
             auto *arr = static_cast<const int64_t *>(static_cast<const void *>(col.data));
-            for (size_t i = 0; i < row_count; ++i) {
-                if (is_null(i))
-                    continue;
-                if (apply_int(arr[i], val, pred.op))
-                    result.push_back(i);
+            if (pred.op != CmpOp::kNe) {
+                std::vector<size_t> raw;
+                simd::filter(arr, row_count, val, get_simd_op(pred.op), raw);
+                for (size_t i : raw) {
+                    if (!is_null(i)) result.push_back(i);
+                }
+            } else {
+                for (size_t i = 0; i < row_count; ++i) {
+                    if (is_null(i)) continue;
+                    if (apply_int(arr[i], val, pred.op)) result.push_back(i);
+                }
             }
         }
         else if (col_type == ColumnType::kInt32) {
             auto *arr = static_cast<const int32_t *>(static_cast<const void *>(col.data));
-            for (size_t i = 0; i < row_count; ++i) {
-                if (is_null(i))
-                    continue;
-                if (apply_int(arr[i], val, pred.op))
-                    result.push_back(i);
+            int32_t val32 = static_cast<int32_t>(val);
+            if (pred.op != CmpOp::kNe) {
+                std::vector<size_t> raw;
+                simd::filter(arr, row_count, val32, get_simd_op(pred.op), raw);
+                for (size_t i : raw) {
+                    if (!is_null(i)) result.push_back(i);
+                }
+            } else {
+                for (size_t i = 0; i < row_count; ++i) {
+                    if (is_null(i)) continue;
+                    if (apply_int(arr[i], val, pred.op)) result.push_back(i);
+                }
             }
         }
     }
@@ -117,11 +142,17 @@ auto Filter::evaluate(const std::vector<ColumnData> &columns,
         double val = std::get<double>(pred.value.data);
         if (col_type == ColumnType::kFloat64) {
             auto *arr = static_cast<const double *>(static_cast<const void *>(col.data));
-            for (size_t i = 0; i < row_count; ++i) {
-                if (is_null(i))
-                    continue;
-                if (apply_double(arr[i], val, pred.op))
-                    result.push_back(i);
+            if (pred.op != CmpOp::kNe) {
+                std::vector<size_t> raw;
+                simd::filter(arr, row_count, val, get_simd_op(pred.op), raw);
+                for (size_t i : raw) {
+                    if (!is_null(i)) result.push_back(i);
+                }
+            } else {
+                for (size_t i = 0; i < row_count; ++i) {
+                    if (is_null(i)) continue;
+                    if (apply_double(arr[i], val, pred.op)) result.push_back(i);
+                }
             }
         }
     }

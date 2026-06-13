@@ -14,6 +14,11 @@ include(cmake/CompilerOptions.cmake)
 # ──────────────────────────────────────────────
 # Library: rawdb (static)
 # ──────────────────────────────────────────────
+option(RAWDB_ENABLE_AVX2 "Enable AVX2 SIMD instructions" ON)
+
+if(RAWDB_ENABLE_AVX2 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    add_compile_options(-mavx2)
+endif()
 set(RAWDB_SOURCES
     src/rawdb.cpp
     src/memory/mmap_file.cpp
