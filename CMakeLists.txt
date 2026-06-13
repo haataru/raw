@@ -104,6 +104,9 @@ add_rawdb_test(concurrency_test tests/unit/concurrency_test.cpp)
 add_rawdb_bench(mmap tests/bench/mmap_bench.cpp)
 add_rawdb_bench(sql tests/bench/sql_bench.cpp)
 
+add_executable(stress_test tests/bench/stress_test.cpp)
+target_link_libraries(stress_test PRIVATE rawdb)
+
 # ──────────────────────────────────────────────
 # Custom targets
 # ──────────────────────────────────────────────
