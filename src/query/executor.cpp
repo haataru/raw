@@ -25,6 +25,9 @@ auto Executor::execute(const Statement &stmt) -> StatusOr<QueryResult>
     if (std::holds_alternative<DeleteStmt>(stmt)) {
         return execute_delete(std::get<DeleteStmt>(stmt));
     }
+    if (std::holds_alternative<UpdateStmt>(stmt)) {
+        return execute_update(std::get<UpdateStmt>(stmt));
+    }
     if (std::holds_alternative<CreateStmt>(stmt)) {
         return execute_create(std::get<CreateStmt>(stmt));
     }

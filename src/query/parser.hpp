@@ -44,6 +44,8 @@ enum class TokenType
     kDesc,
     kLimit,
     kVacuum,
+    kUpdate,
+    kSet,
     kEnd
 };
 
@@ -115,6 +117,15 @@ struct DeleteStmt
     bool has_where{false};
 };
 
+struct UpdateStmt
+{
+    std::string table_name;
+    std::string column_name;
+    Value new_value;
+    Predicate where;
+    bool has_where{false};
+};
+
 struct ColumnDef
 {
     std::string name;
@@ -140,7 +151,7 @@ struct VacuumStmt
 };
 
 using Statement =
-    std::variant<InsertStmt, SelectStmt, DeleteStmt, CreateStmt, CreateIndexStmt, VacuumStmt>;
+    std::variant<InsertStmt, SelectStmt, DeleteStmt, UpdateStmt, CreateStmt, CreateIndexStmt, VacuumStmt>;
 
 // ──────────────────────────────────────────────
 // Parser
@@ -166,6 +177,7 @@ private:
     auto parse_insert() -> StatusOr<InsertStmt>;
     auto parse_select() -> StatusOr<SelectStmt>;
     auto parse_delete() -> StatusOr<DeleteStmt>;
+    auto parse_update() -> StatusOr<UpdateStmt>;
     auto parse_create() -> StatusOr<Statement>;
     auto parse_create_index() -> StatusOr<CreateIndexStmt>;
     auto parse_vacuum() -> StatusOr<VacuumStmt>;

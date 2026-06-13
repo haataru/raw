@@ -48,6 +48,10 @@ static auto is_keyword(std::string_view s) -> TokenType
         return TokenType::kLimit;
     if (s == "vacuum")
         return TokenType::kVacuum;
+    if (s == "update")
+        return TokenType::kUpdate;
+    if (s == "set")
+        return TokenType::kSet;
     return TokenType::kIdentifier;
 }
 
@@ -214,6 +218,8 @@ auto Parser::parse_statement() -> StatusOr<Statement>
             return parse_select();
         case TokenType::kDelete:
             return parse_delete();
+        case TokenType::kUpdate:
+            return parse_update();
         case TokenType::kCreate:
             return parse_create();
         case TokenType::kVacuum:
@@ -404,6 +410,50 @@ auto Parser::parse_delete() -> StatusOr<DeleteStmt>
     DeleteStmt stmt;
     stmt.table_name = current_.text;
     next_token();
+
+    if (peek() == TokenType::kWhere) {
+        next_token();
+        auto pred = parse_predicate();
+        if (!pred)
+            return std::unexpected(pred.error());
+        stmt.where = std::move(*pred);
+        stmt.has_where = true;
+    }
+
+    return stmt;
+}
+
+auto Parser::parse_update() -> StatusOr<UpdateStmt>
+{
+    auto st = consume(TokenType::kUpdate);
+    if (st != Status::kOk)
+        return std::unexpected(st);
+
+    if (peek() != TokenType::kIdentifier) {
+        return std::unexpected(Status::kInvalidArgument);
+    }
+    UpdateStmt stmt;
+    stmt.table_name = current_.text;
+    next_token();
+
+    st = consume(TokenType::kSet);
+    if (st != Status::kOk)
+        return std::unexpected(st);
+
+    if (peek() != TokenType::kIdentifier) {
+        return std::unexpected(Status::kInvalidArgument);
+    }
+    stmt.column_name = current_.text;
+    next_token();
+
+    st = consume(TokenType::kEq);
+    if (st != Status::kOk)
+        return std::unexpected(st);
+
+    auto val = parse_value();
+    if (!val)
+        return std::unexpected(val.error());
+    stmt.new_value = std::move(*val);
 
     if (peek() == TokenType::kWhere) {
         next_token();

@@ -518,3 +518,51 @@ TEST(ExecutorTest, VacuumPersistence)
     db.close();
     std::filesystem::remove_all(path);
 }
+
+TEST(ExecutorTest, UpdateStatement)
+{
+    Database db;
+    auto path = std::filesystem::temp_directory_path() / "rawdb_exec_update";
+    std::filesystem::remove_all(path);
+    ASSERT_EQ(db.open(path), Status::kOk);
+
+    Schema schema;
+    schema.columns = {ColumnType::kInt32, ColumnType::kVarChar, ColumnType::kFloat64};
+    schema.names = {"id", "name", "score"};
+    *db.create_table("users", schema);
+
+    Executor exec(db);
+    exec.execute("INSERT INTO users VALUES (1, 'alice', 95.5)");
+    exec.execute("INSERT INTO users VALUES (2, 'bob', 80.0)");
+    exec.execute("INSERT INTO users VALUES (3, 'charlie', 70.0)");
+
+    // Update with filter
+    auto upd = exec.execute("UPDATE users SET score = 100.0 WHERE id = 2");
+    ASSERT_TRUE(upd.has_value());
+    ASSERT_EQ(upd->rows.size(), 1);
+    EXPECT_EQ(upd->rows[0][0], "1"); // 1 row updated
+
+    // Update without filter (all rows)
+    auto upd_all = exec.execute("UPDATE users SET name = 'anonymous'");
+    ASSERT_TRUE(upd_all.has_value());
+    EXPECT_EQ(upd_all->rows[0][0], "3"); // 3 rows updated
+
+    // Verify
+    auto sel = exec.execute("SELECT id, name, score FROM users ORDER BY id");
+    ASSERT_TRUE(sel.has_value());
+    ASSERT_EQ(sel->rows.size(), 3);
+    EXPECT_EQ(sel->rows[0][0], "1");
+    EXPECT_EQ(sel->rows[0][1], "anonymous");
+    EXPECT_EQ(sel->rows[0][2], "95.500000");
+
+    EXPECT_EQ(sel->rows[1][0], "2");
+    EXPECT_EQ(sel->rows[1][1], "anonymous");
+    EXPECT_EQ(sel->rows[1][2], "100.000000");
+
+    EXPECT_EQ(sel->rows[2][0], "3");
+    EXPECT_EQ(sel->rows[2][1], "anonymous");
+    EXPECT_EQ(sel->rows[2][2], "70.000000");
+
+    db.close();
+    std::filesystem::remove_all(path);
+}

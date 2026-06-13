@@ -218,4 +218,127 @@ auto Executor::execute_delete(const DeleteStmt &stmt) -> StatusOr<QueryResult>
     return result;
 }
 
+static auto bytes_to_value(const ColumnData &col, ColumnType type, size_t row_idx, size_t total_rows) -> Value
+{
+    Value v;
+    switch (type) {
+        case ColumnType::kInt32:
+            v.data = static_cast<int64_t>(static_cast<const int32_t *>(static_cast<const void *>(col.data))[row_idx]);
+            break;
+        case ColumnType::kInt64:
+            v.data = static_cast<const int64_t *>(static_cast<const void *>(col.data))[row_idx];
+            break;
+        case ColumnType::kFloat64:
+            v.data = static_cast<const double *>(static_cast<const void *>(col.data))[row_idx];
+            break;
+        case ColumnType::kBool:
+            v.data = static_cast<int64_t>(static_cast<const bool *>(static_cast<const void *>(col.data))[row_idx]);
+            break;
+        case ColumnType::kVarChar: {
+            auto *raw = static_cast<const std::byte *>(col.data);
+            size_t off_bytes = total_rows * sizeof(uint32_t);
+            if (col.size < off_bytes) {
+                v.data = std::string("");
+                break;
+            }
+            auto *offsets = reinterpret_cast<const uint32_t *>(static_cast<const void *>(raw));
+            uint32_t start = (row_idx == 0) ? 0 : offsets[row_idx - 1];
+            uint32_t end = offsets[row_idx];
+            v.data = std::string(reinterpret_cast<const char *>(raw + off_bytes + start), end - start);
+            break;
+        }
+    }
+    return v;
+}
+
+auto Executor::execute_update(const UpdateStmt &stmt) -> StatusOr<QueryResult>
+{
+    TableId tid = 0;
+    bool found = false;
+    for (TableId i = 0; i < static_cast<TableId>(db_.table_count()); ++i) {
+        if (db_.table(i).name() == stmt.table_name) {
+            tid = static_cast<TableId>(i);
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        return std::unexpected(Status::kNotFound);
+    }
+
+    auto &tbl = db_.table(tid);
+    const auto &schema = tbl.schema();
+
+    size_t target_col_idx = static_cast<size_t>(-1);
+    for (size_t ci = 0; ci < schema.names.size(); ++ci) {
+        if (schema.names[ci] == stmt.column_name) {
+            target_col_idx = ci;
+            break;
+        }
+    }
+    if (target_col_idx == static_cast<size_t>(-1)) {
+        return std::unexpected(Status::kNotFound);
+    }
+
+    tbl.flush_pending();
+    auto scan = read_table_columns(tbl);
+    if (!scan)
+        return std::unexpected(scan.error());
+    size_t row_count = tbl.row_count();
+
+    std::vector<RowId> target_rows;
+    if (stmt.has_where) {
+        auto matching = Filter::evaluate(scan->columns, schema, row_count, stmt.where);
+        if (!matching)
+            return std::unexpected(matching.error());
+        Timestamp read_ts = db_.next_ts();
+        for (auto row_idx : *matching) {
+            auto r = tbl.search_version_index(static_cast<RowId>(row_idx), read_ts);
+            if (!r || *r != Table::kNotFoundPage) {
+                target_rows.push_back(static_cast<RowId>(row_idx));
+            }
+        }
+    } else {
+        target_rows.reserve(row_count);
+        for (size_t i = 0; i < row_count; ++i) {
+            target_rows.push_back(static_cast<RowId>(i));
+        }
+    }
+
+    size_t updated = target_rows.size();
+
+    if (updated > 0) {
+        InsertStmt insert_stmt;
+        insert_stmt.table_name = stmt.table_name;
+        insert_stmt.rows.reserve(updated);
+
+        for (auto rid : target_rows) {
+            std::vector<Value> row_vals;
+            row_vals.reserve(schema.column_count());
+            for (size_t ci = 0; ci < schema.column_count(); ++ci) {
+                if (ci == target_col_idx) {
+                    row_vals.push_back(stmt.new_value);
+                } else {
+                    row_vals.push_back(bytes_to_value(scan->columns[ci], schema.columns[ci], rid, row_count));
+                }
+            }
+            insert_stmt.rows.push_back(std::move(row_vals));
+        }
+
+        auto st = db_.delete_rows(tid, target_rows);
+        if (st != Status::kOk)
+            return std::unexpected(st);
+
+        auto ins_res = execute_insert(insert_stmt);
+        if (!ins_res)
+            return std::unexpected(ins_res.error());
+    }
+
+    QueryResult result;
+    result.column_names = {"rows_updated"};
+    result.column_types = {ColumnType::kInt64};
+    result.rows = {{std::to_string(updated)}};
+    return result;
+}
+
 } // namespace rawdb
