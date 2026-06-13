@@ -29,7 +29,7 @@ TEST(FilterTest, Int32Eq)
         {ColumnType::kInt32, reinterpret_cast<const std::byte *>(data), sizeof(data), nullptr});
 
     Predicate pred;
-    pred.column = ColumnRef{"x"};
+    pred.column = ColumnRef{"", "x"};
     pred.op = CmpOp::kEq;
     pred.value = Value{int64_t(30)};
 
@@ -51,7 +51,7 @@ TEST(FilterTest, Int32Gt)
         {ColumnType::kInt32, reinterpret_cast<const std::byte *>(data), sizeof(data), nullptr});
 
     Predicate pred;
-    pred.column = ColumnRef{"x"};
+    pred.column = ColumnRef{"", "x"};
     pred.op = CmpOp::kGt;
     pred.value = Value{int64_t(25)};
 
@@ -79,7 +79,7 @@ TEST(FilterTest, Int64Range)
         {ColumnType::kInt64, reinterpret_cast<const std::byte *>(data), sizeof(data), nullptr});
 
     Predicate pred;
-    pred.column = ColumnRef{"val"};
+    pred.column = ColumnRef{"", "val"};
     pred.op = CmpOp::kLe;
     pred.value = Value{int64_t(200)};
 
@@ -106,7 +106,7 @@ TEST(FilterTest, Float64Ne)
         {ColumnType::kFloat64, reinterpret_cast<const std::byte *>(data), sizeof(data), nullptr});
 
     Predicate pred;
-    pred.column = ColumnRef{"y"};
+    pred.column = ColumnRef{"", "y"};
     pred.op = CmpOp::kNe;
     pred.value = Value{double(2.5)};
 
@@ -135,7 +135,7 @@ TEST(FilterTest, SkipNulls)
         {ColumnType::kInt32, reinterpret_cast<const std::byte *>(data), sizeof(data), nulls});
 
     Predicate pred;
-    pred.column = ColumnRef{"x"};
+    pred.column = ColumnRef{"", "x"};
     pred.op = CmpOp::kEq;
     pred.value = Value{int64_t(2)};
 
@@ -170,7 +170,7 @@ TEST(FilterTest, VarCharEq)
     cols.push_back({ColumnType::kVarChar, vc_data.data(), vc_data.size(), nullptr});
 
     Predicate pred;
-    pred.column = ColumnRef{"name"};
+    pred.column = ColumnRef{"", "name"};
     pred.op = CmpOp::kEq;
     pred.value = Value{std::string("bob")};
 
@@ -196,7 +196,7 @@ TEST(FilterTest, ColumnNotFound)
         {ColumnType::kInt32, reinterpret_cast<const std::byte *>(data), sizeof(data), nullptr});
 
     Predicate pred;
-    pred.column = ColumnRef{"nonexistent"};
+    pred.column = ColumnRef{"", "nonexistent"};
     pred.op = CmpOp::kEq;
     pred.value = Value{int64_t(1)};
 

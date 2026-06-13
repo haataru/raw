@@ -55,6 +55,32 @@ TEST(ParserTest, SelectStar)
     EXPECT_FALSE(stmt->has_where);
 }
 
+TEST(ParserTest, ParseJoin)
+{
+    rawdb::Parser parser;
+    auto ast = parser.parse("SELECT users.name, orders.amount FROM users JOIN orders ON users.id = orders.user_id");
+    if (!ast.has_value()) {
+        std::cerr << "Parser error: " << ast.error() << std::endl;
+    }
+    ASSERT_TRUE(ast.has_value());
+    
+    auto* stmt = std::get_if<rawdb::SelectStmt>(&ast.value());
+    ASSERT_NE(stmt, nullptr);
+    EXPECT_EQ(stmt->table_name, "users");
+    EXPECT_TRUE(stmt->has_join);
+    EXPECT_EQ(stmt->join_clause.table_name, "orders");
+    EXPECT_EQ(stmt->join_clause.left_col.table, "users");
+    EXPECT_EQ(stmt->join_clause.left_col.name, "id");
+    EXPECT_EQ(stmt->join_clause.right_col.table, "orders");
+    EXPECT_EQ(stmt->join_clause.right_col.name, "user_id");
+    
+    ASSERT_EQ(stmt->columns.size(), 2);
+    EXPECT_EQ(stmt->columns[0].table, "users");
+    EXPECT_EQ(stmt->columns[0].name, "name");
+    EXPECT_EQ(stmt->columns[1].table, "orders");
+    EXPECT_EQ(stmt->columns[1].name, "amount");
+}
+
 TEST(ParserTest, SelectSpecificColumns)
 {
     Parser p;

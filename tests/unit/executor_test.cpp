@@ -3,8 +3,68 @@
 #include <gtest/gtest.h>
 
 #include <cstring>
+#include <algorithm>
 
 using namespace rawdb;
+
+TEST(ExecutorTest, Join)
+{
+    std::filesystem::path path = std::filesystem::temp_directory_path() / "rawdb_exec_join";
+    std::filesystem::remove_all(path);
+    Database db;
+    ASSERT_EQ(db.open(path), Status::kOk);
+    Connection conn(db);
+    Executor exec(conn);
+
+    // Create users table
+    auto st_cu = exec.execute("CREATE TABLE users (id INT32, name VARCHAR)");
+    ASSERT_TRUE(st_cu.has_value());
+    
+    // Create orders table
+    auto st_co = exec.execute("CREATE TABLE orders (id INT32, user_id INT32, amount FLOAT64)");
+    ASSERT_TRUE(st_co.has_value());
+
+    // Insert users
+    ASSERT_TRUE(exec.execute("INSERT INTO users VALUES (1, 'Alice')").has_value());
+    ASSERT_TRUE(exec.execute("INSERT INTO users VALUES (2, 'Bob')").has_value());
+    ASSERT_TRUE(exec.execute("INSERT INTO users VALUES (3, 'Charlie')").has_value());
+
+    // Insert orders
+    ASSERT_TRUE(exec.execute("INSERT INTO orders VALUES (101, 1, 50.5)").has_value());
+    ASSERT_TRUE(exec.execute("INSERT INTO orders VALUES (102, 1, 120.0)").has_value());
+    ASSERT_TRUE(exec.execute("INSERT INTO orders VALUES (103, 2, 75.25)").has_value());
+    // No order for Charlie
+
+    // Query with JOIN
+    auto q_res = exec.execute("SELECT users.name, orders.amount FROM users JOIN orders ON users.id = orders.user_id");
+    if (!q_res.has_value()) {
+        std::cerr << "Query error: " << q_res.error() << std::endl;
+    }
+    ASSERT_TRUE(q_res.has_value());
+    
+    const auto &res = q_res.value();
+    ASSERT_EQ(res.column_names.size(), 2);
+    EXPECT_EQ(res.column_names[0], "users.name");
+    EXPECT_EQ(res.column_names[1], "orders.amount");
+    
+    ASSERT_EQ(res.rows.size(), 3);
+    
+    // Check results
+    // Wait, order is not guaranteed because of hash table.
+    // Let's sort the results to verify easily
+    auto sorted_rows = res.rows;
+    std::sort(sorted_rows.begin(), sorted_rows.end(), [](const auto &a, const auto &b) {
+        if (a[0] != b[0]) return a[0] < b[0];
+        return std::stod(a[1]) < std::stod(b[1]);
+    });
+    
+    EXPECT_EQ(sorted_rows[0][0], "Alice");
+    EXPECT_EQ(sorted_rows[0][1], "50.500000"); // std::to_string output formatting
+    EXPECT_EQ(sorted_rows[1][0], "Alice");
+    EXPECT_EQ(sorted_rows[1][1], "120.000000");
+    EXPECT_EQ(sorted_rows[2][0], "Bob");
+    EXPECT_EQ(sorted_rows[2][1], "75.250000");
+}
 
 TEST(ExecutorTest, InsertAndSelect)
 {

@@ -69,6 +69,7 @@ public:
 private:
     auto execute_insert(const InsertStmt &stmt) -> StatusOr<QueryResult>;
     auto execute_select(const SelectStmt &stmt) -> StatusOr<QueryResult>;
+    auto execute_join(const SelectStmt &stmt) -> StatusOr<QueryResult>;
     auto execute_delete(const DeleteStmt &stmt) -> StatusOr<QueryResult>;
     auto execute_update(const UpdateStmt &stmt) -> StatusOr<QueryResult>;
     auto execute_create(const CreateStmt &stmt) -> StatusOr<QueryResult>;

@@ -55,6 +55,8 @@ enum class TokenType
     kMin,
     kMax,
     kGroup,
+    kJoin,
+    kDot,
     kEnd
 };
 
@@ -80,9 +82,17 @@ enum class AggFunc : uint8_t
 
 struct ColumnRef
 {
+    std::string table; // Optional table prefix
     std::string name;
     AggFunc func{AggFunc::kNone};
     bool is_star{false};
+};
+
+struct JoinClause
+{
+    std::string table_name;
+    ColumnRef left_col;
+    ColumnRef right_col;
 };
 
 struct Value
@@ -126,6 +136,8 @@ struct SelectStmt
     Predicate where;
     bool has_where{false};
     std::vector<ColumnRef> group_by;
+    JoinClause join_clause{};
+    bool has_join{false};
     OrderBy order_by{};
     bool has_order_by{false};
     size_t limit_count{0};

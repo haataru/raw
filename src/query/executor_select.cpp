@@ -59,6 +59,10 @@ static auto compare_column_values(const ColumnData &col,
 
 auto Executor::execute_select(const SelectStmt &stmt) -> StatusOr<QueryResult>
 {
+    if (stmt.has_join) {
+        return execute_join(stmt);
+    }
+
     TableId tid = 0;
     bool found = false;
     for (TableId i = 0; i < static_cast<TableId>(conn_.db().table_count()); ++i) {
@@ -350,6 +354,184 @@ auto Executor::execute_select(const SelectStmt &stmt) -> StatusOr<QueryResult>
         
         if (stmt.has_limit && result.rows.size() > stmt.limit_count) {
             result.rows.resize(stmt.limit_count);
+        }
+    }
+
+    return result;
+}
+
+auto Executor::execute_join(const SelectStmt &stmt) -> StatusOr<QueryResult>
+{
+    // Find Left Table
+    TableId tid_left = 0;
+    bool found_left = false;
+    for (TableId i = 0; i < static_cast<TableId>(conn_.db().table_count()); ++i) {
+        if (conn_.db().table(i).name() == stmt.table_name) {
+            tid_left = static_cast<TableId>(i);
+            found_left = true;
+            break;
+        }
+    }
+    if (!found_left) return std::unexpected(Status::kNotFound);
+
+    // Find Right Table
+    TableId tid_right = 0;
+    bool found_right = false;
+    for (TableId i = 0; i < static_cast<TableId>(conn_.db().table_count()); ++i) {
+        if (conn_.db().table(i).name() == stmt.join_clause.table_name) {
+            tid_right = static_cast<TableId>(i);
+            found_right = true;
+            break;
+        }
+    }
+    if (!found_right) return std::unexpected(Status::kNotFound);
+
+    auto &tbl_left = conn_.db().table(tid_left);
+    auto &tbl_right = conn_.db().table(tid_right);
+    const auto &schema_left = tbl_left.schema();
+    const auto &schema_right = tbl_right.schema();
+
+    tbl_left.flush_pending();
+    tbl_right.flush_pending();
+
+    Timestamp read_ts = conn_.txn() ? conn_.txn()->read_ts : conn_.db().next_ts();
+    size_t row_count_left = tbl_left.row_count();
+    size_t row_count_right = tbl_right.row_count();
+
+    QueryResult result;
+    
+    struct ColMapping {
+        bool is_left;
+        size_t idx;
+    };
+    std::vector<ColMapping> output_mapping;
+
+    if (stmt.columns.empty()) {
+        for (size_t i = 0; i < schema_left.names.size(); ++i) {
+            result.column_names.push_back(stmt.table_name + "." + schema_left.names[i]);
+            result.column_types.push_back(schema_left.columns[i]);
+            output_mapping.push_back({true, i});
+        }
+        for (size_t i = 0; i < schema_right.names.size(); ++i) {
+            result.column_names.push_back(stmt.join_clause.table_name + "." + schema_right.names[i]);
+            result.column_types.push_back(schema_right.columns[i]);
+            output_mapping.push_back({false, i});
+        }
+    } else {
+        for (const auto &col : stmt.columns) {
+            std::string col_name = col.name;
+            size_t left_idx = static_cast<size_t>(-1);
+            size_t right_idx = static_cast<size_t>(-1);
+
+            if (col.table.empty() || col.table == stmt.table_name) {
+                auto it = std::find(schema_left.names.begin(), schema_left.names.end(), col_name);
+                if (it != schema_left.names.end()) {
+                    left_idx = static_cast<size_t>(std::distance(schema_left.names.begin(), it));
+                }
+            }
+            if (col.table.empty() || col.table == stmt.join_clause.table_name) {
+                auto it = std::find(schema_right.names.begin(), schema_right.names.end(), col_name);
+                if (it != schema_right.names.end()) {
+                    right_idx = static_cast<size_t>(std::distance(schema_right.names.begin(), it));
+                }
+            }
+
+            if (left_idx != static_cast<size_t>(-1) && right_idx != static_cast<size_t>(-1)) {
+                return std::unexpected(Status::kInvalidArgument); // Ambiguous column reference
+            } else if (left_idx != static_cast<size_t>(-1)) {
+                result.column_names.push_back(col.table.empty() ? col_name : col.table + "." + col_name);
+                result.column_types.push_back(schema_left.columns[left_idx]);
+                output_mapping.push_back({true, left_idx});
+            } else if (right_idx != static_cast<size_t>(-1)) {
+                result.column_names.push_back(col.table.empty() ? col_name : col.table + "." + col_name);
+                result.column_types.push_back(schema_right.columns[right_idx]);
+                output_mapping.push_back({false, right_idx});
+            } else {
+                return std::unexpected(Status::kNotFound);
+            }
+        }
+    }
+
+    auto resolve_col = [&](const ColumnRef &col) -> std::pair<bool, size_t> {
+        size_t left_idx = static_cast<size_t>(-1);
+        size_t right_idx = static_cast<size_t>(-1);
+
+        if (col.table.empty() || col.table == stmt.table_name) {
+            auto it = std::find(schema_left.names.begin(), schema_left.names.end(), col.name);
+            if (it != schema_left.names.end()) left_idx = static_cast<size_t>(std::distance(schema_left.names.begin(), it));
+        }
+        if (col.table.empty() || col.table == stmt.join_clause.table_name) {
+            auto it = std::find(schema_right.names.begin(), schema_right.names.end(), col.name);
+            if (it != schema_right.names.end()) right_idx = static_cast<size_t>(std::distance(schema_right.names.begin(), it));
+        }
+
+        if (left_idx != static_cast<size_t>(-1) && right_idx != static_cast<size_t>(-1)) {
+            return {false, static_cast<size_t>(-1)}; // Ambiguous
+        } else if (left_idx != static_cast<size_t>(-1)) {
+            return {true, left_idx};
+        } else if (right_idx != static_cast<size_t>(-1)) {
+            return {false, right_idx};
+        }
+        return {false, static_cast<size_t>(-1)};
+    };
+
+    auto left_res = resolve_col(stmt.join_clause.left_col);
+    auto right_res = resolve_col(stmt.join_clause.right_col);
+
+    if (left_res.second == static_cast<size_t>(-1) || right_res.second == static_cast<size_t>(-1)) {
+        return std::unexpected(Status::kNotFound);
+    }
+    if (left_res.first == right_res.first) {
+        return std::unexpected(Status::kInvalidArgument);
+    }
+
+    size_t join_col_left_idx = left_res.first ? left_res.second : right_res.second;
+    size_t join_col_right_idx = !left_res.first ? left_res.second : right_res.second;
+
+    std::vector<size_t> all_left;
+    for (size_t i = 0; i < schema_left.columns.size(); ++i) all_left.push_back(i);
+    std::vector<size_t> all_right;
+    for (size_t i = 0; i < schema_right.columns.size(); ++i) all_right.push_back(i);
+
+    std::vector<RowId> left_visible;
+    for (size_t ri = 0; ri < row_count_left; ++ri) {
+        auto r = tbl_left.search_version_index(static_cast<RowId>(ri), read_ts);
+        if (!r || *r != Table::kNotFoundPage) left_visible.push_back(static_cast<RowId>(ri));
+    }
+    
+    std::vector<RowId> right_visible;
+    for (size_t ri = 0; ri < row_count_right; ++ri) {
+        auto r = tbl_right.search_version_index(static_cast<RowId>(ri), read_ts);
+        if (!r || *r != Table::kNotFoundPage) right_visible.push_back(static_cast<RowId>(ri));
+    }
+
+    auto scan_left = tbl_left.read_rows(left_visible, all_left);
+    if (!scan_left) return std::unexpected(scan_left.error());
+    auto scan_right = tbl_right.read_rows(right_visible, all_right);
+    if (!scan_right) return std::unexpected(scan_right.error());
+
+    std::unordered_multimap<std::string, size_t> hash_table;
+    for (size_t k = 0; k < right_visible.size(); ++k) {
+        std::string val = value_to_string(scan_right->columns[join_col_right_idx], schema_right.columns[join_col_right_idx], k, right_visible.size());
+        hash_table.insert({val, k});
+    }
+
+    for (size_t k_left = 0; k_left < left_visible.size(); ++k_left) {
+        std::string val_left = value_to_string(scan_left->columns[join_col_left_idx], schema_left.columns[join_col_left_idx], k_left, left_visible.size());
+        
+        auto range = hash_table.equal_range(val_left);
+        for (auto it = range.first; it != range.second; ++it) {
+            size_t k_right = it->second;
+            
+            std::vector<std::string> row_out;
+            for (auto map : output_mapping) {
+                if (map.is_left) {
+                    row_out.push_back(value_to_string(scan_left->columns[map.idx], schema_left.columns[map.idx], k_left, left_visible.size()));
+                } else {
+                    row_out.push_back(value_to_string(scan_right->columns[map.idx], schema_right.columns[map.idx], k_right, right_visible.size()));
+                }
+            }
+            result.rows.push_back(std::move(row_out));
         }
     }
 
