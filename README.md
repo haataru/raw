@@ -1,34 +1,34 @@
 # rawDB — Embedded Columnar Database
 
 **rawDB** — встраиваемая колоночная OLAP-база данных на современном C++23 без единой внешней
-зависимости. SQL-интерфейс поверх append-only storage на mmap с MVCC-изоляцией и фоновой
-сборкой мусора.
+зависимости (~9.4K строк кода). SQL-интерфейс поверх append-only storage на mmap с полноценными
+ACID транзакциями, Write-Ahead Logging (WAL) и фоновыми Checkpoints (Fuzzy Checkpointing).
 
 ```
-INSERT throughput:  115K rows/sec
-SELECT full scan:  1.1M rows/sec (100K rows)
-Index lookup:      105K qps
-Concurrent mix:    11.3K ops/sec (8 threads)
+INSERT throughput: ~2.2M RPS (с включенным WAL и транзакциями)
+SELECT full scan:  ~9.7M rows/sec (100K rows)
+Index lookup:      ~1.7M qps
+Concurrent mix:    15.8K ops/sec (8 threads)
 ```
 
 ---
 
 ## Возможности
 
-- **Чистый SQL** — `CREATE TABLE`, `INSERT`, `DELETE`, `SELECT` с `WHERE`, `ORDER BY` (ASC/DESC),
+- **Чистый SQL** — Транзакции (`BEGIN`, `COMMIT`, `ROLLBACK`), `CREATE TABLE`, `INSERT`, `UPDATE`, `DELETE`, `SELECT` с `WHERE`, `ORDER BY` (ASC/DESC),
   `LIMIT`, `CREATE INDEX`, `VACUUM`. Никакого отдельного query API.
 - **Колоночное хранение** — каждая колонка хранится отдельно в страницах по 64 KiB,
   читаются только затребованные колонки.
-- **MVCC** — поплавочные таймстемпы, snapshot isolation; читатели никогда не блокируют писателей.
-- **Фоновый GC** — автоматическая чистка tombstone-записей с rate limit 500 MB/s,
+- **ACID & Транзакции** — полноценный Write-Ahead Logging (сегменты по 64 МБ) гарантирует сохранность данных, а Fuzzy Checkpointing позволяет сбрасывать данные на диск в фоне без Stop-The-World блокировок.
+- **Lock-Free MVCC** — многоверсионность (Multi-Version Concurrency Control); читатели никогда не блокируют писателей. `UPDATE` реализован без блокировок через паттерн `DELETE + INSERT`.
+- **Фоновый GC** — автоматическая чистка tombstone-записей старых транзакций с rate limit 500 MB/s,
   deadlock-free по построению.
 - **B-tree индексы** — точечные lookup'и через `CREATE INDEX … ON …` с автоматическим
   перестроением при `VACUUM`.
 - **VACUUM** — полное возвращение места от удаленных строк, перенумерация RowId,
   перестроение всех индексов.
 - **C API** — `rawdb_open`, `rawdb_execute`, `rawdb_close` — биндинг с любого языка.
-- **Durability** — `msync` после каждой записи страницы; schema, version index и B-tree
-  переживают перезапуск.
+- **Durability** — Журнал транзакций (WAL) гарантирует долговечность, фоновый `checkpointer` периодически делает `msync` и сохраняет индексы, восстанавливая состояние через `checkpoint.meta`.
 - **Один include** — `#include "rawdb.h"` и линковка `librawdb.a`.
 - **Ноль зависимостей** — даже libc++ не требуется, библиотека полностью самодостаточна.
 
@@ -50,23 +50,25 @@ LIMIT, форматирование). Основной `execute()` диспат�
 INSERT, DELETE, SELECT (с WHERE, ORDER BY, LIMIT) и VACUUM. Ключевые слова
 case-insensitive, точка с запятой в конце опциональна.
 
-**Database** — владеет реестром таблиц (`deque<Table>`), аллокатором таймстемпов
-(lock-free atomic counter), глобальными watermark'ами для snapshot isolation и
-координирует фоновые сервисы (GC, flush handler). `open()` восстанавливает
-сохраненные схемы и version index'ы; `close()` сбрасывает и сохраняет все.
+**Database** — владеет реестром таблиц (`deque<Table>`), менеджером транзакций (`TransactionManager`)
+и координирует фоновые сервисы (GC, Checkpointer). `open()` восстанавливает
+сохраненные схемы, читает `checkpoint.meta` и идемпотентно накатывает транзакции из WAL логов.
 
 **Storage** — каждая таблица владеет:
 - `MmapFile` — memory-mapped I/O для `.raw`-файла с данными
 - `PageIndex` — отображение диапазонов RowId на страницы
-- `VersionIndex` — per-row version chain (MVCC-видимость, упакованный in-memory index)
+- `VersionIndex` — per-row version chain с Lock-Free флагами транзакций (`TxId` и состояния).
 - `BTree indexes` — один на индексированную колонку, сохраняется в `<table>_<col>.idx`
 - `PendingBatch` — staging buffer для входящих строк; сбрасывается на новую страницу
   при достижении 8192 строк или `kMaxPendingRows`
 
-Два фоновых сервиса:
-- **GarbageCollector** — просыпается каждую секунду, вычисляет cutoff timestamp и
-  чистит tombstone-записи из VersionIndex каждой таблицы с rate limit 500 MB/s.
-- **FlushHandler** — периодически вызывает `msync` на грязных страницах для durability.
+**Recovery / Журналирование**
+- `WalWriter` / `WalReader` — управляет сегментами Write-Ahead Log (64 МБ каждый). В лог пишутся все транзакции перед коммитом (инкрементный LSN).
+
+Два фоновых сервиса (в `std::thread`):
+- **GarbageCollector** — просыпается каждую секунду, вычисляет cutoff-порог транзакций и
+  чистит tombstone-записи из VersionIndex каждой таблицы.
+- **Checkpointer** — просыпается раз в 5 секунд, сбрасывает грязные страницы на диск, сохраняет индексы, делает `msync`, записывает `checkpoint.meta` и **удаляет старые сегменты WAL**, избегая переполнения диска (без блокировки активных транзакций).
 
 ### Формат хранения
 
@@ -108,12 +110,11 @@ strategies, hinted handoffs — просто `db.open(path)` и готово.
 ### Что rawDB делает иначе
 
 1. **Zero dependencies** — один `librawdb.a`, никакого transitive dependency hell.
-2. **Code you can read** — ~5000 строк C++23, прямолинейная архитектура.
-3. **Append-only by design** — нет WAL, redo log, crash recovery. Страницы пишутся
-   один раз и читаются через mmap. Удаленные строки tombstone'ятся в памяти и
+2. **Code you can read** — ~9.4K строк C++23, прямолинейная архитектура.
+3. **Append-only by design + WAL** — Страницы пишутся
+   один раз и читаются через mmap. А благодаря WAL и фоновому Fuzzy Checkpointing выдерживается скорость в 2.2M RPS без Stop-The-World пауз на сброс. Удаленные строки tombstone'ятся в памяти и
    собираются в фоне.
-4. **Per-row MVCC** — каждый INSERT получает свой timestamp, GC чистит индивидуально.
-   Никаких fixed-size vector windows или merge-tree уровней.
+4. **Per-row MVCC + Lock-Free Transactions** — каждый INSERT/UPDATE получает свой Transaction ID (`TxId`), GC чистит мусор индивидуально. За счет паттерна `UPDATE = DELETE + INSERT` база не знает, что такое взаимная блокировка.
 5. **VACUUM как SQL-команда** — пользователь сам контролирует компакшн.
    `VACUUM table_name` возвращает место и перенумеровывает RowId. Не мешает hot path.
 6. **Один `shared_mutex` на таблицу** — простейшая корректная модель concurrency.
