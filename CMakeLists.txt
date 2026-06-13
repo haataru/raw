@@ -42,6 +42,7 @@ set(RAWDB_SOURCES
 
 add_library(rawdb STATIC ${RAWDB_SOURCES})
 target_include_directories(rawdb PUBLIC src include)
+set_target_properties(rawdb PROPERTIES POSITION_INDEPENDENT_CODE ON)
 rawdb_set_strict_options(rawdb)
 
 # ──────────────────────────────────────────────
@@ -64,6 +65,13 @@ FetchContent_Declare(
 )
 set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(benchmark)
+
+FetchContent_Declare(
+    pybind11
+    URL https://github.com/pybind/pybind11/archive/refs/tags/v2.12.0.tar.gz
+)
+set(PYBIND11_TEST OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(pybind11)
 
 function(add_rawdb_test name source)
     add_executable(${name} ${source})
@@ -106,6 +114,15 @@ add_rawdb_bench(sql tests/bench/sql_bench.cpp)
 
 add_executable(stress_test tests/bench/stress_test.cpp)
 target_link_libraries(stress_test PRIVATE rawdb)
+
+# ──────────────────────────────────────────────
+# Python Bindings
+# ──────────────────────────────────────────────
+pybind11_add_module(rawdb_ext MODULE python/rawdb_python.cpp)
+set_target_properties(rawdb_ext PROPERTIES OUTPUT_NAME "rawdb")
+target_link_libraries(rawdb_ext PRIVATE rawdb)
+target_include_directories(rawdb_ext PRIVATE src)
+rawdb_set_strict_options(rawdb_ext)
 
 # ──────────────────────────────────────────────
 # Custom targets
