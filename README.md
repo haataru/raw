@@ -40,10 +40,11 @@ Cassandra — сложный кластер, требующий DevOps. SQLite �
 Вся техническая информация вынесена в папку `docs/`. Рекомендуем начать с архитектуры:
 
 1. 🏛️ **[Архитектура и внутреннее устройство](docs/architecture.md)** — Storage, MVCC, WAL, GC, Checkpoints.
-2. 📝 **[Диалект SQL](docs/sql_dialect.md)** — Типы данных, DDL, DML, DQL (SELECT, GROUP BY, агрегации).
-3. 🐍 **[Интеграция Python](docs/python_api.md)** — Установка, примеры использования из Python-скриптов.
-4. 💻 **[Command Line Interface (CLI)](docs/cli.md)** — Интерактивный REPL терминал (rawdb_cli) для управления базой данных без кода.
-5. ⚙️ **[Интеграция C / C++](docs/cpp_c_api.md)** — Подключение статической библиотеки и работа через C/C++ API.
+2. ⚡ **[Аппаратное ускорение (SIMD & AVX2)](docs/simd_vectorization.md)** — Как векторизация и SIMD помогают фильтровать миллионы строк за миллисекунды.
+3. 📝 **[Диалект SQL](docs/sql_dialect.md)** — Типы данных, DDL, DML, DQL (SELECT, GROUP BY, агрегации).
+4. 🐍 **[Интеграция Python](docs/python_api.md)** — Установка, примеры использования из Python-скриптов.
+5. 💻 **[Command Line Interface (CLI)](docs/cli.md)** — Интерактивный REPL терминал (rawdb_cli) для управления базой данных без кода.
+6. ⚙️ **[Интеграция C / C++](docs/cpp_c_api.md)** — Подключение статической библиотеки и работа через C/C++ API.
 
 ---
 
