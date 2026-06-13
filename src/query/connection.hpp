@@ -22,7 +22,7 @@ public:
         if (txn_) {
             return Status::kInvalidArgument; // Already in a transaction
         }
-        txn_ = db_.txn_manager().begin();
+        txn_ = db_.txn_manager().begin(db_);
         return Status::kOk;
     }
 

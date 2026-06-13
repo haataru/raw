@@ -42,6 +42,8 @@ public:
     /// Compact table: remove tombstoned rows and rebuild indexes.
     auto vacuum(TableId table_id) -> Status;
 
+    auto checkpoint() -> Status;
+
     [[nodiscard]] auto table(TableId id) -> Table &
     {
         std::shared_lock lock(tables_mtx_);
@@ -80,6 +82,14 @@ private:
     std::unique_ptr<GarbageCollector> gc_;
     std::unique_ptr<TransactionManager> txn_manager_;
     WalWriter wal_writer_;
+    
+    // Background Checkpointer
+    void checkpointer_thread_func();
+    std::unique_ptr<std::thread> checkpointer_thread_;
+    std::atomic<bool> stop_checkpointer_{false};
+    std::mutex checkpointer_mtx_;
+    std::condition_variable checkpointer_cv_;
+    
     bool is_open_{false};
 };
 

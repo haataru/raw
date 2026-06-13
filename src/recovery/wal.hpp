@@ -39,6 +39,9 @@ public:
     auto open(const std::filesystem::path& db_path) -> Status;
     void close();
 
+    void remove_segments_before(Lsn safe_lsn);
+    auto current_lsn() const -> Lsn;
+
     auto append_begin(TxId tx_id) -> Lsn;
     auto append_commit(TxId tx_id) -> Lsn;
     auto append_rollback(TxId tx_id) -> Lsn;
@@ -51,11 +54,14 @@ public:
 
 private:
     auto append_record(TxId tx_id, WalRecordType type, const std::vector<std::byte>& payload) -> Lsn;
+    void rotate_if_needed();
 
-    std::filesystem::path path_;
-    std::mutex mtx_;
+    std::filesystem::path wal_dir_;
+    mutable std::mutex mtx_;
     std::ofstream file_;
     Lsn next_lsn_{1};
+    Lsn current_segment_start_lsn_{1};
+    size_t current_segment_size_{0};
 };
 
 // WalReader is used during Recovery to read log sequentially
@@ -72,6 +78,11 @@ public:
     auto next() -> StatusOr<Record>;
 
 private:
+    auto open_next_segment() -> bool;
+
+    std::filesystem::path wal_dir_;
+    std::vector<std::filesystem::path> segments_;
+    size_t current_segment_idx_{0};
     std::ifstream file_;
 };
 

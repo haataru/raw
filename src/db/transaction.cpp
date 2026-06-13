@@ -5,11 +5,12 @@
 namespace rawdb
 {
 
-auto TransactionManager::begin() -> std::shared_ptr<Transaction>
+auto TransactionManager::begin(Database& db) -> std::shared_ptr<Transaction>
 {
     auto txn = std::make_shared<Transaction>();
     txn->tx_id = next_tx_id_.fetch_add(1, std::memory_order_relaxed);
     txn->read_ts = ts_alloc_.current();
+    txn->start_lsn = db.wal().append_begin(txn->tx_id);
     
     std::lock_guard lock(mtx_);
     active_txns_.insert({txn->tx_id, txn});
@@ -66,6 +67,21 @@ auto TransactionManager::rollback(std::shared_ptr<Transaction> txn, Database& db
     std::lock_guard lock(mtx_);
     active_txns_.erase(txn->tx_id);
     return Status::kOk;
+}
+
+auto TransactionManager::oldest_active_lsn() -> Lsn
+{
+    std::lock_guard lock(mtx_);
+    if (active_txns_.empty()) {
+        return static_cast<Lsn>(-1); // Max LSN
+    }
+    Lsn oldest = static_cast<Lsn>(-1);
+    for (const auto& [tx_id, txn] : active_txns_) {
+        if (txn->start_lsn > 0 && txn->start_lsn < oldest) {
+            oldest = txn->start_lsn;
+        }
+    }
+    return oldest;
 }
 
 } // namespace rawdb

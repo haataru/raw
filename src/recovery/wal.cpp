@@ -1,5 +1,6 @@
 #include "recovery/wal.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <iostream>
 
@@ -10,38 +11,106 @@ namespace rawdb
 
 auto WalWriter::open(const std::filesystem::path& db_path) -> Status
 {
-    path_ = db_path / "rawdb.wal";
+    wal_dir_ = db_path / "wal";
+    std::filesystem::create_directories(wal_dir_);
     
-    // Scan existing WAL to find max LSN
-    WalReader reader;
-    if (reader.open(db_path) == Status::kOk) {
-        while (true) {
-            auto r = reader.next();
-            if (!r) break;
-            if (r->header.lsn >= next_lsn_) {
-                next_lsn_ = r->header.lsn + 1;
+    std::vector<std::filesystem::path> segments;
+    for (const auto& entry : std::filesystem::directory_iterator(wal_dir_)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".log") {
+            segments.push_back(entry.path());
+        }
+    }
+    std::sort(segments.begin(), segments.end());
+    
+    if (segments.empty()) {
+        current_segment_start_lsn_ = 1;
+        next_lsn_ = 1;
+    } else {
+        auto last_segment = segments.back();
+        std::string filename = last_segment.stem().string();
+        current_segment_start_lsn_ = std::stoull(filename);
+        
+        // Read the last segment to find next_lsn_
+        std::ifstream f(last_segment, std::ios::binary);
+        while (f) {
+            WalRecordHeader hdr;
+            if (f.read(reinterpret_cast<char*>(&hdr), sizeof(hdr))) {
+                if (hdr.magic == 0x57414C52 && hdr.lsn >= next_lsn_) {
+                    next_lsn_ = hdr.lsn + 1;
+                }
+                f.seekg(hdr.payload_size, std::ios::cur);
             }
         }
-        reader.close();
     }
     
-    file_.open(path_, std::ios::binary | std::ios::app);
+    char name_buf[32];
+    std::snprintf(name_buf, sizeof(name_buf), "%020llu.log", static_cast<unsigned long long>(current_segment_start_lsn_));
+    auto current_path = wal_dir_ / name_buf;
+    file_.open(current_path, std::ios::binary | std::ios::app);
     if (!file_) return Status::kIoError;
+    
+    current_segment_size_ = static_cast<size_t>(file_.tellp());
     
     return Status::kOk;
 }
 
 void WalWriter::close()
 {
+    std::lock_guard lock(mtx_);
     if (file_.is_open()) {
         file_.flush();
         file_.close();
     }
 }
 
+void WalWriter::rotate_if_needed()
+{
+    constexpr size_t kMaxSegmentSize = 64 * 1024 * 1024;
+    if (file_.is_open() && current_segment_size_ >= kMaxSegmentSize) {
+        file_.flush();
+        file_.close();
+        
+        current_segment_start_lsn_ = next_lsn_;
+        char name_buf[32];
+        std::snprintf(name_buf, sizeof(name_buf), "%020llu.log", static_cast<unsigned long long>(current_segment_start_lsn_));
+        file_.open(wal_dir_ / name_buf, std::ios::binary | std::ios::app);
+        current_segment_size_ = 0;
+    }
+}
+
+void WalWriter::remove_segments_before(Lsn safe_lsn)
+{
+    std::lock_guard lock(mtx_);
+    std::vector<std::filesystem::path> segments;
+    for (const auto& entry : std::filesystem::directory_iterator(wal_dir_)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".log") {
+            segments.push_back(entry.path());
+        }
+    }
+    std::sort(segments.begin(), segments.end());
+    
+    for (size_t i = 0; i < segments.size(); ++i) {
+        if (i + 1 < segments.size()) {
+            std::string next_filename = segments[i+1].stem().string();
+            Lsn next_start_lsn = std::stoull(next_filename);
+            if (next_start_lsn <= safe_lsn) {
+                std::error_code ec;
+                std::filesystem::remove(segments[i], ec);
+            }
+        }
+    }
+}
+
+auto WalWriter::current_lsn() const -> Lsn
+{
+    std::lock_guard lock(mtx_);
+    return next_lsn_;
+}
+
 auto WalWriter::append_record(TxId tx_id, WalRecordType type, const std::vector<std::byte>& payload) -> Lsn
 {
     std::lock_guard lock(mtx_);
+    rotate_if_needed();
     
     WalRecordHeader hdr;
     hdr.magic = 0x57414C52;
@@ -52,8 +121,10 @@ auto WalWriter::append_record(TxId tx_id, WalRecordType type, const std::vector<
     hdr.checksum = compute_page_checksum(payload.data(), payload.size());
     
     file_.write(reinterpret_cast<const char*>(&hdr), sizeof(hdr));
+    current_segment_size_ += sizeof(hdr);
     if (!payload.empty()) {
         file_.write(reinterpret_cast<const char*>(payload.data()), static_cast<std::streamsize>(payload.size()));
+        current_segment_size_ += payload.size();
     }
     
     return hdr.lsn;
@@ -128,9 +199,20 @@ auto WalWriter::flush() -> Status
 
 auto WalReader::open(const std::filesystem::path& db_path) -> Status
 {
-    file_.open(db_path / "rawdb.wal", std::ios::binary);
-    if (!file_) return Status::kNotFound;
-    return Status::kOk;
+    wal_dir_ = db_path / "wal";
+    if (std::filesystem::exists(wal_dir_)) {
+        for (const auto& entry : std::filesystem::directory_iterator(wal_dir_)) {
+            if (entry.is_regular_file() && entry.path().extension() == ".log") {
+                segments_.push_back(entry.path());
+            }
+        }
+        std::sort(segments_.begin(), segments_.end());
+    }
+    
+    if (segments_.empty()) return Status::kNotFound;
+    
+    current_segment_idx_ = 0;
+    return open_next_segment() ? Status::kOk : Status::kNotFound;
 }
 
 void WalReader::close()
@@ -138,34 +220,60 @@ void WalReader::close()
     if (file_.is_open()) file_.close();
 }
 
+auto WalReader::open_next_segment() -> bool
+{
+    if (file_.is_open()) file_.close();
+    
+    while (current_segment_idx_ < segments_.size()) {
+        file_.open(segments_[current_segment_idx_], std::ios::binary);
+        current_segment_idx_++;
+        if (file_.is_open()) return true;
+    }
+    return false;
+}
+
 auto WalReader::next() -> StatusOr<Record>
 {
-    if (!file_.is_open() || file_.eof()) return std::unexpected(Status::kNotFound);
+    while (true) {
+        if (!file_.is_open() || file_.eof()) {
+            if (!open_next_segment()) {
+                return std::unexpected(Status::kNotFound);
+            }
+            continue;
+        }
 
-    Record rec;
-    file_.read(reinterpret_cast<char*>(&rec.header), sizeof(rec.header));
-    if (file_.gcount() < static_cast<std::streamsize>(sizeof(rec.header))) {
-        return std::unexpected(Status::kNotFound);
-    }
-
-    if (rec.header.magic != 0x57414C52) {
-        return std::unexpected(Status::kCorruptedData);
-    }
-
-    if (rec.header.payload_size > 0) {
-        rec.payload.resize(rec.header.payload_size);
-        file_.read(reinterpret_cast<char*>(rec.payload.data()), rec.header.payload_size);
-        if (file_.gcount() < static_cast<std::streamsize>(rec.header.payload_size)) {
+        Record rec;
+        file_.read(reinterpret_cast<char*>(&rec.header), sizeof(rec.header));
+        if (file_.gcount() < static_cast<std::streamsize>(sizeof(rec.header))) {
+            if (file_.gcount() == 0) {
+                if (!open_next_segment()) {
+                    return std::unexpected(Status::kNotFound);
+                }
+                continue;
+            }
+            // Corrupt file (incomplete header)
             return std::unexpected(Status::kCorruptedData);
         }
-        
-        uint32_t csum = compute_page_checksum(rec.payload.data(), rec.payload.size());
-        if (csum != rec.header.checksum) {
+
+        if (rec.header.magic != 0x57414C52) {
             return std::unexpected(Status::kCorruptedData);
         }
-    }
 
-    return rec;
+        if (rec.header.payload_size > 0) {
+            rec.payload.resize(rec.header.payload_size);
+            file_.read(reinterpret_cast<char*>(rec.payload.data()), rec.header.payload_size);
+            if (file_.gcount() < static_cast<std::streamsize>(rec.header.payload_size)) {
+                return std::unexpected(Status::kCorruptedData);
+            }
+            
+            uint32_t csum = compute_page_checksum(rec.payload.data(), rec.payload.size());
+            if (csum != rec.header.checksum) {
+                return std::unexpected(Status::kCorruptedData);
+            }
+        }
+
+        return rec;
+    }
 }
 
 } // namespace rawdb

@@ -26,6 +26,7 @@ struct Transaction
     TxId tx_id;
     Timestamp read_ts;
     TransactionState state{TransactionState::kActive};
+    Lsn start_lsn{0};
     
     // Rows modified by this transaction. TableId -> vector<RowId>
     std::unordered_map<TableId, std::vector<RowId>> write_set;
@@ -36,11 +37,13 @@ class TransactionManager
 public:
     explicit TransactionManager(TimestampAllocator& ts_alloc) : ts_alloc_(ts_alloc) {}
 
-    auto begin() -> std::shared_ptr<Transaction>;
+    auto begin(Database& db) -> std::shared_ptr<Transaction>;
     
     auto commit(std::shared_ptr<Transaction> txn, Database& db) -> Status;
     
     auto rollback(std::shared_ptr<Transaction> txn, Database& db) -> Status;
+
+    auto oldest_active_lsn() -> Lsn;
 
 private:
     std::atomic<TxId> next_tx_id_{1};
