@@ -194,7 +194,7 @@ auto Executor::execute_delete(const DeleteStmt &stmt) -> StatusOr<QueryResult>
             return std::unexpected(matching.error());
         for (auto row_idx : *matching) {
             auto r = tbl.search_version_index(static_cast<RowId>(row_idx), read_ts);
-            if (!r || *r != Table::kNotFoundPage) {
+            if (r && *r != Table::kNotFoundPage) {
                 target_rows.push_back(static_cast<RowId>(row_idx));
             }
         }
@@ -203,7 +203,7 @@ auto Executor::execute_delete(const DeleteStmt &stmt) -> StatusOr<QueryResult>
         target_rows.reserve(row_count);
         for (size_t i = 0; i < row_count; ++i) {
             auto r = tbl.search_version_index(static_cast<RowId>(i), read_ts);
-            if (!r || *r != Table::kNotFoundPage) {
+            if (r && *r != Table::kNotFoundPage) {
                 target_rows.push_back(static_cast<RowId>(i));
             }
         }
@@ -301,7 +301,7 @@ auto Executor::execute_update(const UpdateStmt &stmt) -> StatusOr<QueryResult>
             return std::unexpected(matching.error());
         for (auto row_idx : *matching) {
             auto r = tbl.search_version_index(static_cast<RowId>(row_idx), read_ts);
-            if (!r || *r != Table::kNotFoundPage) {
+            if (r && *r != Table::kNotFoundPage) {
                 target_rows.push_back(static_cast<RowId>(row_idx));
             }
         }
@@ -309,7 +309,7 @@ auto Executor::execute_update(const UpdateStmt &stmt) -> StatusOr<QueryResult>
         target_rows.reserve(row_count);
         for (size_t i = 0; i < row_count; ++i) {
             auto r = tbl.search_version_index(static_cast<RowId>(i), read_ts);
-            if (!r || *r != Table::kNotFoundPage) {
+            if (r && *r != Table::kNotFoundPage) {
                 target_rows.push_back(static_cast<RowId>(i));
             }
         }

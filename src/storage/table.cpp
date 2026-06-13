@@ -323,8 +323,18 @@ void Table::insert_version_entries(const IndexEntry *entries, size_t count)
 
 void Table::commit_rows(const std::vector<RowId>& row_ids, TxId tx_id, Timestamp commit_ts)
 {
-    std::shared_lock lock(*rw_mtx);
-    version_index_.commit_rows(row_ids, tx_id, commit_ts);
+    std::unique_lock lock(*rw_mtx);
+    std::vector<RowId> index_rows;
+    for (auto rid : row_ids) {
+        if (rid >= pending_.start_rid && rid < pending_.start_rid + pending_.row_count) {
+            pending_.row_ts[rid - pending_.start_rid] = commit_ts;
+        } else {
+            index_rows.push_back(rid);
+        }
+    }
+    if (!index_rows.empty()) {
+        version_index_.commit_rows(index_rows, tx_id, commit_ts);
+    }
 }
 
 auto Table::search_version_index(RowId row_id, Timestamp max_ts) const -> StatusOr<uint64_t>

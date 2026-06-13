@@ -182,7 +182,7 @@ auto Executor::execute_select(const SelectStmt &stmt) -> StatusOr<QueryResult>
                 if (static_cast<size_t>(rid) >= row_count)
                     continue;
                 auto r = tbl.search_version_index(rid, read_ts);
-                if (!r || *r != Table::kNotFoundPage) {
+                if (r && *r != Table::kNotFoundPage) {
                     visible.push_back(rid);
                 }
             }
@@ -210,7 +210,7 @@ auto Executor::execute_select(const SelectStmt &stmt) -> StatusOr<QueryResult>
 
         for (auto row_idx : matching) {
             auto r = tbl.search_version_index(static_cast<RowId>(row_idx), read_ts);
-            if (!r || *r != Table::kNotFoundPage) {
+            if (r && *r != Table::kNotFoundPage) {
                 visible.push_back(static_cast<RowId>(row_idx));
             }
         }
@@ -515,13 +515,13 @@ auto Executor::execute_join(const SelectStmt &stmt) -> StatusOr<QueryResult>
     std::vector<RowId> left_visible;
     for (size_t ri = 0; ri < row_count_left; ++ri) {
         auto r = tbl_left.search_version_index(static_cast<RowId>(ri), read_ts);
-        if (!r || *r != Table::kNotFoundPage) left_visible.push_back(static_cast<RowId>(ri));
+        if (r && *r != Table::kNotFoundPage) left_visible.push_back(static_cast<RowId>(ri));
     }
     
     std::vector<RowId> right_visible;
     for (size_t ri = 0; ri < row_count_right; ++ri) {
         auto r = tbl_right.search_version_index(static_cast<RowId>(ri), read_ts);
-        if (!r || *r != Table::kNotFoundPage) right_visible.push_back(static_cast<RowId>(ri));
+        if (r && *r != Table::kNotFoundPage) right_visible.push_back(static_cast<RowId>(ri));
     }
 
     auto scan_left = tbl_left.read_rows(left_visible, all_left);

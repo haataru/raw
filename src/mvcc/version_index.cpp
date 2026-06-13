@@ -28,8 +28,8 @@ void VersionIndex::ensure_sorted() const
                 return a.row_id < b.row_id;
             return a.ts > b.ts;
         });
-        sorting_.store(false, std::memory_order_release);
         dirty_.store(false, std::memory_order_release);
+        sorting_.store(false, std::memory_order_release);
         return;
     }
 
