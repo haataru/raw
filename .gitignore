@@ -22,3 +22,7 @@ compile_commands.json
 # OS
 .DS_Store
 Thumbs.db
+
+# CLI Data
+rawdb_data/
+rawdb_memory_fallback/
