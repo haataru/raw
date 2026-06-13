@@ -49,6 +49,12 @@ enum class TokenType
     kBeginTxn,
     kCommitTxn,
     kRollbackTxn,
+    kCount,
+    kSum,
+    kAvg,
+    kMin,
+    kMax,
+    kGroup,
     kEnd
 };
 
@@ -62,9 +68,21 @@ struct Token
 // AST
 // ──────────────────────────────────────────────
 
+enum class AggFunc : uint8_t
+{
+    kNone,
+    kCount,
+    kSum,
+    kAvg,
+    kMin,
+    kMax
+};
+
 struct ColumnRef
 {
     std::string name;
+    AggFunc func{AggFunc::kNone};
+    bool is_star{false};
 };
 
 struct Value
@@ -107,6 +125,7 @@ struct SelectStmt
     std::string table_name;
     Predicate where;
     bool has_where{false};
+    std::vector<ColumnRef> group_by;
     OrderBy order_by{};
     bool has_order_by{false};
     size_t limit_count{0};

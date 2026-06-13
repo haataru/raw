@@ -58,6 +58,18 @@ static auto is_keyword(std::string_view s) -> TokenType
         return TokenType::kCommitTxn;
     if (s == "rollback")
         return TokenType::kRollbackTxn;
+    if (s == "count")
+        return TokenType::kCount;
+    if (s == "sum")
+        return TokenType::kSum;
+    if (s == "avg")
+        return TokenType::kAvg;
+    if (s == "min")
+        return TokenType::kMin;
+    if (s == "max")
+        return TokenType::kMax;
+    if (s == "group")
+        return TokenType::kGroup;
     return TokenType::kIdentifier;
 }
 
@@ -365,6 +377,22 @@ auto Parser::parse_select() -> StatusOr<SelectStmt>
         stmt.has_where = true;
     }
 
+    if (peek() == TokenType::kGroup) {
+        auto st2 = consume(TokenType::kGroup);
+        if (st2 != Status::kOk)
+            return std::unexpected(st2);
+        st2 = consume(TokenType::kBy);
+        if (st2 != Status::kOk)
+            return std::unexpected(st2);
+        
+        do {
+            auto col = parse_column_ref();
+            if (!col)
+                return std::unexpected(col.error());
+            stmt.group_by.push_back(std::move(*col));
+        } while (peek() == TokenType::kComma && (consume(TokenType::kComma), true));
+    }
+
     if (peek() == TokenType::kOrder) {
         auto st2 = consume(TokenType::kOrder);
         if (st2 != Status::kOk)
@@ -386,7 +414,6 @@ auto Parser::parse_select() -> StatusOr<SelectStmt>
         }
         stmt.has_order_by = true;
     }
-
     if (peek() == TokenType::kLimit) {
         auto st2 = consume(TokenType::kLimit);
         if (st2 != Status::kOk)
@@ -522,10 +549,41 @@ auto Parser::parse_predicate() -> StatusOr<Predicate>
 
 auto Parser::parse_column_ref() -> StatusOr<ColumnRef>
 {
+    ColumnRef ref;
+    
+    TokenType t = peek();
+    if (t == TokenType::kCount || t == TokenType::kSum || t == TokenType::kAvg || 
+        t == TokenType::kMin || t == TokenType::kMax) {
+        if (t == TokenType::kCount) ref.func = AggFunc::kCount;
+        else if (t == TokenType::kSum) ref.func = AggFunc::kSum;
+        else if (t == TokenType::kAvg) ref.func = AggFunc::kAvg;
+        else if (t == TokenType::kMin) ref.func = AggFunc::kMin;
+        else if (t == TokenType::kMax) ref.func = AggFunc::kMax;
+        
+        next_token();
+        auto st = consume(TokenType::kLParen);
+        if (st != Status::kOk) return std::unexpected(st);
+        
+        if (peek() == TokenType::kStar) {
+            ref.is_star = true;
+            ref.name = "*";
+            next_token();
+        } else if (peek() == TokenType::kIdentifier) {
+            ref.name = current_.text;
+            next_token();
+        } else {
+            return std::unexpected(Status::kInvalidArgument);
+        }
+        
+        st = consume(TokenType::kRParen);
+        if (st != Status::kOk) return std::unexpected(st);
+        
+        return ref;
+    }
+
     if (peek() != TokenType::kIdentifier) {
         return std::unexpected(Status::kInvalidArgument);
     }
-    ColumnRef ref;
     ref.name = current_.text;
     next_token();
     return ref;
