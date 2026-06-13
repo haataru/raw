@@ -31,14 +31,18 @@ auto Executor::execute_insert(const InsertStmt &stmt) -> StatusOr<QueryResult>
     };
     std::vector<RowBufs> saved;
 
+    std::vector<ColumnData> cols(schema.column_count());
+    std::vector<std::vector<std::byte>> bufs(schema.column_count());
+    std::vector<std::vector<uint8_t>> nulls(schema.column_count());
+
     for (const auto &row : stmt.rows) {
         if (row.size() != schema.column_count()) {
             return std::unexpected(Status::kInvalidArgument);
         }
 
-        std::vector<ColumnData> cols;
-        std::vector<std::vector<std::byte>> bufs(schema.column_count());
-        std::vector<std::vector<uint8_t>> nulls(schema.column_count());
+        if (has_indexes) {
+            bufs = std::vector<std::vector<std::byte>>(schema.column_count());
+        }
 
         for (size_t ci = 0; ci < row.size(); ++ci) {
             auto col_type = schema.columns[ci];
@@ -105,12 +109,10 @@ auto Executor::execute_insert(const InsertStmt &stmt) -> StatusOr<QueryResult>
         }
 
         for (size_t ci = 0; ci < schema.column_count(); ++ci) {
-            ColumnData cd;
-            cd.type = schema.columns[ci];
-            cd.data = bufs[ci].data();
-            cd.size = bufs[ci].size();
-            cd.nulls = nulls[ci].empty() ? nullptr : nulls[ci].data();
-            cols.push_back(cd);
+            cols[ci].type = schema.columns[ci];
+            cols[ci].data = bufs[ci].data();
+            cols[ci].size = bufs[ci].size();
+            cols[ci].nulls = nulls[ci].empty() ? nullptr : nulls[ci].data();
         }
 
         auto st = db_.insert(tid, cols);
@@ -184,11 +186,11 @@ auto Executor::execute_delete(const DeleteStmt &stmt) -> StatusOr<QueryResult>
     size_t row_count = tbl.row_count();
 
     std::vector<RowId> target_rows;
+    Timestamp read_ts = db_.next_ts();
     if (stmt.has_where) {
         auto matching = Filter::evaluate(scan->columns, schema, row_count, stmt.where);
         if (!matching)
             return std::unexpected(matching.error());
-        Timestamp read_ts = db_.next_ts();
         for (auto row_idx : *matching) {
             auto r = tbl.search_version_index(static_cast<RowId>(row_idx), read_ts);
             if (!r || *r != Table::kNotFoundPage) {
@@ -199,7 +201,10 @@ auto Executor::execute_delete(const DeleteStmt &stmt) -> StatusOr<QueryResult>
     else {
         target_rows.reserve(row_count);
         for (size_t i = 0; i < row_count; ++i) {
-            target_rows.push_back(static_cast<RowId>(i));
+            auto r = tbl.search_version_index(static_cast<RowId>(i), read_ts);
+            if (!r || *r != Table::kNotFoundPage) {
+                target_rows.push_back(static_cast<RowId>(i));
+            }
         }
     }
 
@@ -287,11 +292,11 @@ auto Executor::execute_update(const UpdateStmt &stmt) -> StatusOr<QueryResult>
     size_t row_count = tbl.row_count();
 
     std::vector<RowId> target_rows;
+    Timestamp read_ts = db_.next_ts();
     if (stmt.has_where) {
         auto matching = Filter::evaluate(scan->columns, schema, row_count, stmt.where);
         if (!matching)
             return std::unexpected(matching.error());
-        Timestamp read_ts = db_.next_ts();
         for (auto row_idx : *matching) {
             auto r = tbl.search_version_index(static_cast<RowId>(row_idx), read_ts);
             if (!r || *r != Table::kNotFoundPage) {
@@ -301,7 +306,10 @@ auto Executor::execute_update(const UpdateStmt &stmt) -> StatusOr<QueryResult>
     } else {
         target_rows.reserve(row_count);
         for (size_t i = 0; i < row_count; ++i) {
-            target_rows.push_back(static_cast<RowId>(i));
+            auto r = tbl.search_version_index(static_cast<RowId>(i), read_ts);
+            if (!r || *r != Table::kNotFoundPage) {
+                target_rows.push_back(static_cast<RowId>(i));
+            }
         }
     }
 

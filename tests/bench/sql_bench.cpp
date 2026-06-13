@@ -53,9 +53,14 @@ static auto run_sql_benchmarks(bool /*quick*/) -> void
     // ── INSERT ──
     {
         auto start = clock::now();
-        for (size_t i = 0; i < kRowCount; ++i) {
-            auto r = exec.execute("INSERT INTO t VALUES (" +
-                                  std::to_string(static_cast<int64_t>(i)) + ")");
+        constexpr size_t kBatchSize = 1000;
+        for (size_t i = 0; i < kRowCount; i += kBatchSize) {
+            std::string sql = "INSERT INTO t VALUES ";
+            for (size_t j = 0; j < kBatchSize && (i + j) < kRowCount; ++j) {
+                if (j > 0) sql += ", ";
+                sql += "(" + std::to_string(static_cast<int64_t>(i + j)) + ")";
+            }
+            auto r = exec.execute(sql);
             if (!r) {
                 std::cerr << "INSERT failed at " << i << "\n";
                 std::exit(1);
