@@ -23,6 +23,7 @@ struct BatchHeader
     TableId table_id;
     size_t row_count;
     size_t col_count;
+    Lsn last_applied_lsn{0};
 };
 
 static constexpr uint32_t kPageMagic = 0x52415744; // "RAWD"

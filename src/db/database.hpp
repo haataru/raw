@@ -12,7 +12,9 @@
 #include "buffer/flush_handler.hpp"
 #include "core/error.hpp"
 #include "core/types.hpp"
+#include "db/transaction.hpp"
 #include "mvcc/gc.hpp"
+#include "recovery/wal.hpp"
 #include "storage/table.hpp"
 
 namespace rawdb
@@ -33,9 +35,9 @@ public:
 
     auto create_table(const std::string &name, Schema schema) -> StatusOr<TableId>;
 
-    auto insert(TableId table_id, const std::vector<ColumnData> &columns) -> Status;
+    auto insert(TableId table_id, const std::vector<ColumnData> &columns, const std::shared_ptr<Transaction>& txn = nullptr) -> StatusOr<RowId>;
 
-    auto delete_rows(TableId table_id, std::vector<RowId> row_ids) -> Status;
+    auto delete_rows(TableId table_id, std::vector<RowId> row_ids, const std::shared_ptr<Transaction>& txn = nullptr) -> Status;
 
     /// Compact table: remove tombstoned rows and rebuild indexes.
     auto vacuum(TableId table_id) -> Status;
@@ -65,6 +67,9 @@ public:
 
     auto next_ts() -> Timestamp { return timestamps_.allocate_ts(); }
 
+    auto txn_manager() -> TransactionManager& { return *txn_manager_; }
+    auto wal() -> WalWriter& { return wal_writer_; }
+
 private:
     std::filesystem::path path_;
     mutable std::shared_mutex tables_mtx_;
@@ -73,6 +78,8 @@ private:
     TimestampAllocator timestamps_;
     GlobalWatermarks watermarks_;
     std::unique_ptr<GarbageCollector> gc_;
+    std::unique_ptr<TransactionManager> txn_manager_;
+    WalWriter wal_writer_;
     bool is_open_{false};
 };
 

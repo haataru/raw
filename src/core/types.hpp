@@ -16,6 +16,11 @@ using TxId = uint64_t;
 using PageId = uint64_t;
 using ColumnId = uint16_t;
 using TableId = uint32_t;
+using Lsn = uint64_t;
+
+// Hint bit for transaction IDs stored in VersionIndex
+constexpr uint64_t kTxIdFlag = 1ULL << 63;
+constexpr uint64_t kInvalidTxId = 0;
 
 enum class ColumnType : uint8_t
 {

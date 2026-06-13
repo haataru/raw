@@ -10,9 +10,43 @@
 namespace rawdb
 {
 
-Table::Table(std::string name, Schema schema) : name_(std::move(name)), schema_(std::move(schema))
+Table::Table(std::string name, Schema schema)
+    : name_(std::move(name)), schema_(std::move(schema))
 {
     pending_.col_data.resize(schema_.column_count());
+}
+
+Table::Table(Table &&other) noexcept
+    : rw_mtx(std::move(other.rw_mtx)),
+      name_(std::move(other.name_)),
+      schema_(std::move(other.schema_)),
+      row_count_(other.row_count_),
+      file_(std::move(other.file_)),
+      file_open_(other.file_open_),
+      version_index_(std::move(other.version_index_)),
+      current_lsn_(other.current_lsn_.load(std::memory_order_relaxed)),
+      pages_(std::move(other.pages_)),
+      indexes_(std::move(other.indexes_)),
+      pending_(std::move(other.pending_))
+{
+}
+
+auto Table::operator=(Table &&other) noexcept -> Table &
+{
+    if (this != &other) {
+        name_ = std::move(other.name_);
+        schema_ = std::move(other.schema_);
+        row_count_ = other.row_count_;
+        file_ = std::move(other.file_);
+        file_open_ = other.file_open_;
+        version_index_ = std::move(other.version_index_);
+        current_lsn_.store(other.current_lsn_.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        pages_ = std::move(other.pages_);
+        indexes_ = std::move(other.indexes_);
+        pending_ = std::move(other.pending_);
+        rw_mtx = std::move(other.rw_mtx);
+    }
+    return *this;
 }
 
 auto Table::row_count() const -> size_t
@@ -21,10 +55,10 @@ auto Table::row_count() const -> size_t
     return row_count_;
 }
 
-auto Table::insert_row(Timestamp ts, const std::vector<ColumnData> &columns) -> Status
+auto Table::insert_row(Timestamp ts, const std::vector<ColumnData> &columns) -> StatusOr<RowId>
 {
     if (columns.size() != schema_.column_count()) {
-        return Status::kInvalidArgument;
+        return std::unexpected(Status::kInvalidArgument);
     }
 
     std::unique_lock lock(*rw_mtx);
@@ -38,6 +72,7 @@ auto Table::insert_row(Timestamp ts, const std::vector<ColumnData> &columns) -> 
         auto *src = static_cast<const std::byte *>(columns[i].data);
         pending_.col_data[i].insert(pending_.col_data[i].end(), src, src + columns[i].size);
     }
+    RowId inserted_rid = row_count_;
     ++pending_.row_count;
     ++row_count_;
 
@@ -45,14 +80,14 @@ auto Table::insert_row(Timestamp ts, const std::vector<ColumnData> &columns) -> 
         write_pending_to_page();
     }
 
-    return Status::kOk;
+    return inserted_rid;
 }
 
 auto Table::insert_row(TimestampAllocator &timestamps,
-                       const std::vector<ColumnData> &columns) -> Status
+                       const std::vector<ColumnData> &columns) -> StatusOr<RowId>
 {
     if (columns.size() != schema_.column_count()) {
-        return Status::kInvalidArgument;
+        return std::unexpected(Status::kInvalidArgument);
     }
 
     std::unique_lock lock(*rw_mtx);
@@ -67,6 +102,7 @@ auto Table::insert_row(TimestampAllocator &timestamps,
         auto *src = static_cast<const std::byte *>(columns[i].data);
         pending_.col_data[i].insert(pending_.col_data[i].end(), src, src + columns[i].size);
     }
+    RowId inserted_rid = row_count_;
     ++pending_.row_count;
     ++row_count_;
 
@@ -74,7 +110,7 @@ auto Table::insert_row(TimestampAllocator &timestamps,
         write_pending_to_page();
     }
 
-    return Status::kOk;
+    return inserted_rid;
 }
 
 void Table::flush_pending()
@@ -137,6 +173,7 @@ void Table::write_pending_to_page()
     bh->table_id = 0;
     bh->row_count = row_count;
     bh->col_count = col_count;
+    bh->last_applied_lsn = current_lsn_.load(std::memory_order_acquire);
 
     size_t off = hdr_size;
     size_t null_off = hdr_size + total_data_size;
@@ -282,6 +319,12 @@ void Table::insert_version_entries(const IndexEntry *entries, size_t count)
 {
     std::unique_lock lock(*rw_mtx);
     version_index_.insert_bulk(entries, count);
+}
+
+void Table::commit_rows(const std::vector<RowId>& row_ids, TxId tx_id, Timestamp commit_ts)
+{
+    std::shared_lock lock(*rw_mtx);
+    version_index_.commit_rows(row_ids, tx_id, commit_ts);
 }
 
 auto Table::search_version_index(RowId row_id, Timestamp max_ts) const -> StatusOr<uint64_t>

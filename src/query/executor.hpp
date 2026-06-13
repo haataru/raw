@@ -6,6 +6,7 @@
 
 #include "core/error.hpp"
 #include "db/database.hpp"
+#include "query/connection.hpp"
 #include "query/parser.hpp"
 #include "storage/table.hpp"
 
@@ -48,7 +49,7 @@ private:
 class Executor
 {
 public:
-    explicit Executor(Database &db);
+    explicit Executor(Connection &conn) : conn_(conn) {}
 
     auto execute(const Statement &stmt) -> StatusOr<QueryResult>;
 
@@ -66,8 +67,6 @@ public:
                              const Predicate &pred) -> std::optional<std::vector<RowId>>;
 
 private:
-    Database &db_;
-
     auto execute_insert(const InsertStmt &stmt) -> StatusOr<QueryResult>;
     auto execute_select(const SelectStmt &stmt) -> StatusOr<QueryResult>;
     auto execute_delete(const DeleteStmt &stmt) -> StatusOr<QueryResult>;
@@ -75,6 +74,12 @@ private:
     auto execute_create(const CreateStmt &stmt) -> StatusOr<QueryResult>;
     auto execute_create_index(const CreateIndexStmt &stmt) -> StatusOr<QueryResult>;
     auto execute_vacuum(const VacuumStmt &stmt) -> StatusOr<QueryResult>;
+    
+    auto execute_begin(const BeginStmt &stmt) -> StatusOr<QueryResult>;
+    auto execute_commit(const CommitStmt &stmt) -> StatusOr<QueryResult>;
+    auto execute_rollback(const RollbackStmt &stmt) -> StatusOr<QueryResult>;
+
+    Connection &conn_;
 };
 
 } // namespace rawdb

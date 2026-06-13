@@ -10,6 +10,7 @@
 
 #include "db/database.hpp"
 #include "mvcc/version_index.hpp"
+#include "query/connection.hpp"
 #include "query/executor.hpp"
 
 namespace rawdb
@@ -37,7 +38,8 @@ static auto run_sql_benchmarks(bool /*quick*/) -> void
         std::exit(1);
     }
 
-    Executor exec(db);
+    Connection conn(db);
+    Executor exec(conn);
     {
         auto r = exec.execute("CREATE TABLE t (id INT64)");
         if (!r) {
@@ -55,6 +57,7 @@ static auto run_sql_benchmarks(bool /*quick*/) -> void
         auto start = clock::now();
         constexpr size_t kBatchSize = 1000;
         for (size_t i = 0; i < kRowCount; i += kBatchSize) {
+            exec.execute("BEGIN");
             std::string sql = "INSERT INTO t VALUES ";
             for (size_t j = 0; j < kBatchSize && (i + j) < kRowCount; ++j) {
                 if (j > 0) sql += ", ";
@@ -65,6 +68,7 @@ static auto run_sql_benchmarks(bool /*quick*/) -> void
                 std::cerr << "INSERT failed at " << i << "\n";
                 std::exit(1);
             }
+            exec.execute("COMMIT");
         }
         auto ns =
             std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now() - start).count();
@@ -215,7 +219,8 @@ static auto run_concurrent_mix() -> void
     }
 
     {
-        Executor exec(db);
+        Connection conn(db);
+        Executor exec(conn);
         auto r = exec.execute("CREATE TABLE t (id INT64)");
         if (!r) {
             std::cerr << "CREATE TABLE failed\n";
@@ -230,7 +235,8 @@ static auto run_concurrent_mix() -> void
     std::atomic<size_t> select_ok{0};
 
     auto worker = [&](int tid) {
-        Executor exec(db);
+        Connection conn(db);
+        Executor exec(conn);
         for (size_t i = 0; i < kInsertsPerThread; ++i) {
             auto r = exec.execute(
                 "INSERT INTO t VALUES (" +

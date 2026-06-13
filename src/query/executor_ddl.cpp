@@ -24,8 +24,8 @@ static auto fixed_column_size(ColumnType type) -> size_t
 
 auto Executor::execute_create(const CreateStmt &stmt) -> StatusOr<QueryResult>
 {
-    for (TableId i = 0; i < static_cast<TableId>(db_.table_count()); ++i) {
-        if (db_.table(i).name() == stmt.table_name) {
+    for (TableId i = 0; i < static_cast<TableId>(conn_.db().table_count()); ++i) {
+        if (conn_.db().table(i).name() == stmt.table_name) {
             return std::unexpected(Status::kAlreadyExists);
         }
     }
@@ -36,7 +36,7 @@ auto Executor::execute_create(const CreateStmt &stmt) -> StatusOr<QueryResult>
         schema.names.push_back(col.name);
     }
 
-    auto tid = db_.create_table(stmt.table_name, std::move(schema));
+    auto tid = conn_.db().create_table(stmt.table_name, std::move(schema));
     if (!tid)
         return std::unexpected(tid.error());
 
@@ -51,8 +51,8 @@ auto Executor::execute_create_index(const CreateIndexStmt &stmt) -> StatusOr<Que
 {
     TableId tid = 0;
     bool found = false;
-    for (TableId i = 0; i < static_cast<TableId>(db_.table_count()); ++i) {
-        if (db_.table(i).name() == stmt.table_name) {
+    for (TableId i = 0; i < static_cast<TableId>(conn_.db().table_count()); ++i) {
+        if (conn_.db().table(i).name() == stmt.table_name) {
             tid = i;
             found = true;
             break;
@@ -61,7 +61,7 @@ auto Executor::execute_create_index(const CreateIndexStmt &stmt) -> StatusOr<Que
     if (!found)
         return std::unexpected(Status::kNotFound);
 
-    auto &tbl = db_.table(tid);
+    auto &tbl = conn_.db().table(tid);
     const auto &schema = tbl.schema();
 
     size_t col_idx = static_cast<size_t>(-1);
@@ -77,7 +77,7 @@ auto Executor::execute_create_index(const CreateIndexStmt &stmt) -> StatusOr<Que
 
     ColumnType col_type = schema.columns[col_idx];
 
-    auto idx_path = db_.path() / (tbl.name() + "_" + std::to_string(col_idx) + ".idx");
+    auto idx_path = conn_.db().path() / (tbl.name() + "_" + std::to_string(col_idx) + ".idx");
     auto tree_r = BTree::create(idx_path, col_type);
     if (!tree_r)
         return std::unexpected(tree_r.error());
@@ -135,8 +135,8 @@ auto Executor::execute_vacuum(const VacuumStmt &stmt) -> StatusOr<QueryResult>
 {
     TableId tid = 0;
     bool found = false;
-    for (TableId i = 0; i < static_cast<TableId>(db_.table_count()); ++i) {
-        if (db_.table(i).name() == stmt.table_name) {
+    for (TableId i = 0; i < static_cast<TableId>(conn_.db().table_count()); ++i) {
+        if (conn_.db().table(i).name() == stmt.table_name) {
             tid = static_cast<TableId>(i);
             found = true;
             break;
@@ -145,7 +145,7 @@ auto Executor::execute_vacuum(const VacuumStmt &stmt) -> StatusOr<QueryResult>
     if (!found)
         return std::unexpected(Status::kNotFound);
 
-    auto st = db_.vacuum(tid);
+    auto st = conn_.db().vacuum(tid);
     if (st != Status::kOk)
         return std::unexpected(st);
 

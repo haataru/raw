@@ -9,8 +9,8 @@ auto Executor::execute_insert(const InsertStmt &stmt) -> StatusOr<QueryResult>
 {
     TableId tid = 0;
     bool found = false;
-    for (TableId i = 0; i < static_cast<TableId>(db_.table_count()); ++i) {
-        if (db_.table(i).name() == stmt.table_name) {
+    for (TableId i = 0; i < static_cast<TableId>(conn_.db().table_count()); ++i) {
+        if (conn_.db().table(i).name() == stmt.table_name) {
             tid = static_cast<TableId>(i);
             found = true;
             break;
@@ -20,7 +20,7 @@ auto Executor::execute_insert(const InsertStmt &stmt) -> StatusOr<QueryResult>
         return std::unexpected(Status::kNotFound);
     }
 
-    auto &tbl = db_.table(tid);
+    auto &tbl = conn_.db().table(tid);
     auto &schema = tbl.schema();
     RowId start_rid = tbl.row_count();
     bool has_indexes = tbl.has_indexes();
@@ -115,9 +115,9 @@ auto Executor::execute_insert(const InsertStmt &stmt) -> StatusOr<QueryResult>
             cols[ci].nulls = nulls[ci].empty() ? nullptr : nulls[ci].data();
         }
 
-        auto st = db_.insert(tid, cols);
-        if (st != Status::kOk) {
-            return std::unexpected(st);
+        auto st = conn_.db().insert(tid, cols, conn_.txn());
+        if (!st) {
+            return std::unexpected(st.error());
         }
 
         if (has_indexes) {
@@ -126,7 +126,7 @@ auto Executor::execute_insert(const InsertStmt &stmt) -> StatusOr<QueryResult>
     }
 
     if (has_indexes && !saved.empty()) {
-        auto &table_ref = db_.table(tid);
+        auto &table_ref = conn_.db().table(tid);
         for (size_t i = 0; i < saved.size(); ++i) {
             RowId rid = start_rid + static_cast<RowId>(i);
             Status idx_err = Status::kOk;
@@ -164,8 +164,8 @@ auto Executor::execute_delete(const DeleteStmt &stmt) -> StatusOr<QueryResult>
 {
     TableId tid = 0;
     bool found = false;
-    for (TableId i = 0; i < static_cast<TableId>(db_.table_count()); ++i) {
-        if (db_.table(i).name() == stmt.table_name) {
+    for (TableId i = 0; i < static_cast<TableId>(conn_.db().table_count()); ++i) {
+        if (conn_.db().table(i).name() == stmt.table_name) {
             tid = static_cast<TableId>(i);
             found = true;
             break;
@@ -175,7 +175,7 @@ auto Executor::execute_delete(const DeleteStmt &stmt) -> StatusOr<QueryResult>
         return std::unexpected(Status::kNotFound);
     }
 
-    auto &tbl = db_.table(tid);
+    auto &tbl = conn_.db().table(tid);
     const auto &schema = tbl.schema();
 
     tbl.flush_pending();
@@ -186,7 +186,7 @@ auto Executor::execute_delete(const DeleteStmt &stmt) -> StatusOr<QueryResult>
     size_t row_count = tbl.row_count();
 
     std::vector<RowId> target_rows;
-    Timestamp read_ts = db_.next_ts();
+    Timestamp read_ts = conn_.txn() ? conn_.txn()->read_ts : conn_.db().next_ts();
     if (stmt.has_where) {
         auto matching = Filter::evaluate(scan->columns, schema, row_count, stmt.where);
         if (!matching)
@@ -211,7 +211,7 @@ auto Executor::execute_delete(const DeleteStmt &stmt) -> StatusOr<QueryResult>
     size_t deleted = target_rows.size();
 
     if (!target_rows.empty()) {
-        auto st = db_.delete_rows(tid, std::move(target_rows));
+        auto st = conn_.db().delete_rows(tid, std::move(target_rows), conn_.txn());
         if (st != Status::kOk)
             return std::unexpected(st);
     }
@@ -260,8 +260,8 @@ auto Executor::execute_update(const UpdateStmt &stmt) -> StatusOr<QueryResult>
 {
     TableId tid = 0;
     bool found = false;
-    for (TableId i = 0; i < static_cast<TableId>(db_.table_count()); ++i) {
-        if (db_.table(i).name() == stmt.table_name) {
+    for (TableId i = 0; i < static_cast<TableId>(conn_.db().table_count()); ++i) {
+        if (conn_.db().table(i).name() == stmt.table_name) {
             tid = static_cast<TableId>(i);
             found = true;
             break;
@@ -271,7 +271,7 @@ auto Executor::execute_update(const UpdateStmt &stmt) -> StatusOr<QueryResult>
         return std::unexpected(Status::kNotFound);
     }
 
-    auto &tbl = db_.table(tid);
+    auto &tbl = conn_.db().table(tid);
     const auto &schema = tbl.schema();
 
     size_t target_col_idx = static_cast<size_t>(-1);
@@ -292,7 +292,7 @@ auto Executor::execute_update(const UpdateStmt &stmt) -> StatusOr<QueryResult>
     size_t row_count = tbl.row_count();
 
     std::vector<RowId> target_rows;
-    Timestamp read_ts = db_.next_ts();
+    Timestamp read_ts = conn_.txn() ? conn_.txn()->read_ts : conn_.db().next_ts();
     if (stmt.has_where) {
         auto matching = Filter::evaluate(scan->columns, schema, row_count, stmt.where);
         if (!matching)
@@ -333,7 +333,7 @@ auto Executor::execute_update(const UpdateStmt &stmt) -> StatusOr<QueryResult>
             insert_stmt.rows.push_back(std::move(row_vals));
         }
 
-        auto st = db_.delete_rows(tid, target_rows);
+        auto st = conn_.db().delete_rows(tid, target_rows, conn_.txn());
         if (st != Status::kOk)
             return std::unexpected(st);
 

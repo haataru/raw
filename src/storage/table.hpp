@@ -38,17 +38,17 @@ public:
 
     Table(const Table &) = delete;
     auto operator=(const Table &) -> Table & = delete;
-    Table(Table &&) = default;
-    auto operator=(Table &&) -> Table & = default;
+    Table(Table &&other) noexcept;
+    auto operator=(Table &&other) noexcept -> Table &;
 
     [[nodiscard]] auto name() const -> const std::string & { return name_; }
     [[nodiscard]] auto schema() const -> const Schema & { return schema_; }
     [[nodiscard]] auto row_count() const -> size_t;
 
-    auto insert_row(Timestamp ts, const std::vector<ColumnData> &columns) -> Status;
+    auto insert_row(Timestamp ts, const std::vector<ColumnData> &columns) -> StatusOr<RowId>;
 
     auto insert_row(TimestampAllocator &timestamps,
-                    const std::vector<ColumnData> &columns) -> Status;
+                    const std::vector<ColumnData> &columns) -> StatusOr<RowId>;
 
     void flush_pending();
 
@@ -76,6 +76,7 @@ public:
     [[nodiscard]] auto version_index_size() const -> size_t;
     [[nodiscard]] auto version_index_max_ts() const -> Timestamp;
     auto insert_version_entries(const IndexEntry *entries, size_t count) -> void;
+    void commit_rows(const std::vector<RowId>& row_ids, TxId tx_id, Timestamp commit_ts);
 
     [[nodiscard]] auto file() -> MmapFile & { return file_; }
     [[nodiscard]] auto file() const -> const MmapFile & { return file_; }
@@ -99,6 +100,9 @@ public:
     [[nodiscard]] auto lock_unique() { return std::unique_lock(*rw_mtx); }
 
     [[nodiscard]] auto has_indexes() const -> bool;
+
+    void set_lsn(Lsn lsn) { current_lsn_.store(lsn, std::memory_order_release); }
+    [[nodiscard]] auto lsn() const -> Lsn { return current_lsn_.load(std::memory_order_acquire); }
 
     template <typename F>
     auto for_each_index(F &&f) -> void
@@ -130,6 +134,7 @@ private:
     MmapFile file_;
     bool file_open_{false};
     VersionIndex version_index_;
+    std::atomic<Lsn> current_lsn_{0};
 
     struct RowRange
     {

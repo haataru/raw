@@ -61,8 +61,8 @@ auto Executor::execute_select(const SelectStmt &stmt) -> StatusOr<QueryResult>
 {
     TableId tid = 0;
     bool found = false;
-    for (TableId i = 0; i < static_cast<TableId>(db_.table_count()); ++i) {
-        if (db_.table(i).name() == stmt.table_name) {
+    for (TableId i = 0; i < static_cast<TableId>(conn_.db().table_count()); ++i) {
+        if (conn_.db().table(i).name() == stmt.table_name) {
             tid = static_cast<TableId>(i);
             found = true;
             break;
@@ -72,11 +72,11 @@ auto Executor::execute_select(const SelectStmt &stmt) -> StatusOr<QueryResult>
         return std::unexpected(Status::kNotFound);
     }
 
-    auto &tbl = db_.table(tid);
+    auto &tbl = conn_.db().table(tid);
     const auto &schema = tbl.schema();
 
     tbl.flush_pending();
-    Timestamp read_ts = db_.next_ts();
+    Timestamp read_ts = conn_.txn() ? conn_.txn()->read_ts : conn_.db().next_ts();
     size_t row_count = tbl.row_count();
 
     QueryResult result;

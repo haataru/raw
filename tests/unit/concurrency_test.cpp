@@ -67,10 +67,10 @@ TEST(ConcurrencyTest, MultiThreadInsertSelect)
             cols[1].nulls = nullptr;
 
             auto st = db.insert(*tid, cols);
-            if (st != Status::kOk) {
+            if (!st) {
                 std::lock_guard lk(error_mtx);
                 if (!error_happened.exchange(true)) {
-                    error_msg = "insert failed: " + std::string(status_message(st.code));
+                    error_msg = "insert failed: " + std::string(status_message(st.error().code));
                 }
                 return;
             }
@@ -82,7 +82,8 @@ TEST(ConcurrencyTest, MultiThreadInsertSelect)
     // Phase 2: concurrent SELECT
     auto selector = [&](int) {
         phase1_done.arrive_and_wait();
-        Executor exec(db);
+        Connection conn(db);
+        Executor exec(conn);
         for (int i = 0; i < kSelectsPerThread && !error_happened.load(); ++i) {
             auto res = exec.execute("SELECT * FROM test WHERE id >= 0");
             if (!res.has_value()) {
@@ -134,7 +135,8 @@ TEST(ConcurrencyTest, MultiThreadInsertSelect)
     EXPECT_GT(total_selects.load(), 0);
 
     // Final verification
-    auto sel = Executor(db).execute("SELECT * FROM test");
+    Connection conn_test(db);
+    auto sel = Executor(conn_test).execute("SELECT * FROM test");
     ASSERT_TRUE(sel.has_value());
     EXPECT_EQ(sel->rows.size(), static_cast<size_t>(total_inserts.load()));
 

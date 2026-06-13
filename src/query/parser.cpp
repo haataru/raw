@@ -52,6 +52,12 @@ static auto is_keyword(std::string_view s) -> TokenType
         return TokenType::kUpdate;
     if (s == "set")
         return TokenType::kSet;
+    if (s == "begin")
+        return TokenType::kBeginTxn;
+    if (s == "commit")
+        return TokenType::kCommitTxn;
+    if (s == "rollback")
+        return TokenType::kRollbackTxn;
     return TokenType::kIdentifier;
 }
 
@@ -224,6 +230,12 @@ auto Parser::parse_statement() -> StatusOr<Statement>
             return parse_create();
         case TokenType::kVacuum:
             return parse_vacuum();
+        case TokenType::kBeginTxn:
+            return parse_begin();
+        case TokenType::kCommitTxn:
+            return parse_commit();
+        case TokenType::kRollbackTxn:
+            return parse_rollback();
         default:
             return std::unexpected(Status::kInvalidArgument);
     }
@@ -642,6 +654,27 @@ auto Parser::parse_vacuum() -> StatusOr<VacuumStmt>
     next_token();
 
     return stmt;
+}
+
+auto Parser::parse_begin() -> StatusOr<BeginStmt>
+{
+    auto st = consume(TokenType::kBeginTxn);
+    if (st != Status::kOk) return std::unexpected(st);
+    return BeginStmt{};
+}
+
+auto Parser::parse_commit() -> StatusOr<CommitStmt>
+{
+    auto st = consume(TokenType::kCommitTxn);
+    if (st != Status::kOk) return std::unexpected(st);
+    return CommitStmt{};
+}
+
+auto Parser::parse_rollback() -> StatusOr<RollbackStmt>
+{
+    auto st = consume(TokenType::kRollbackTxn);
+    if (st != Status::kOk) return std::unexpected(st);
+    return RollbackStmt{};
 }
 
 } // namespace rawdb

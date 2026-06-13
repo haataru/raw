@@ -63,7 +63,7 @@ TEST(DatabaseTest, InsertAndFlush)
         cols[1].data = reinterpret_cast<const std::byte *>(&b);
         cols[1].size = sizeof(b);
         cols[1].nulls = nullptr;
-        EXPECT_EQ(db.insert(tid, cols), Status::kOk);
+        EXPECT_TRUE(db.insert(tid, cols).has_value());
     }
 
     EXPECT_EQ(db.table(tid).row_count(), 5);
@@ -92,7 +92,7 @@ TEST(DatabaseTest, InsertMultipleBatches)
             cols[0].data = reinterpret_cast<const std::byte *>(&val);
             cols[0].size = sizeof(val);
             cols[0].nulls = nullptr;
-            EXPECT_EQ(db.insert(tid, cols), Status::kOk);
+            EXPECT_TRUE(db.insert(tid, cols).has_value());
         }
     }
 
@@ -121,7 +121,7 @@ TEST(DatabaseTest, InsertWrongColumnCount)
     cols[0].size = sizeof(val);
     cols[0].nulls = nullptr;
 
-    EXPECT_EQ(db.insert(tid, cols), Status::kInvalidArgument);
+    EXPECT_EQ(db.insert(tid, cols).error().code, Status::kInvalidArgument);
 
     db.close();
     std::filesystem::remove_all(path);
@@ -141,7 +141,7 @@ TEST(DatabaseTest, InsertInvalidTableId)
     cols[0].size = sizeof(val);
     cols[0].nulls = nullptr;
 
-    EXPECT_EQ(db.insert(999, cols), Status::kInvalidArgument);
+    EXPECT_EQ(db.insert(999, cols).error().code, Status::kInvalidArgument);
 
     db.close();
     std::filesystem::remove_all(path);

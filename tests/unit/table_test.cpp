@@ -37,7 +37,7 @@ TEST(TableTest, InsertRow)
     cd.size = sizeof(val);
     cd.nulls = nullptr;
 
-    EXPECT_EQ(table.insert_row(1, {cd}), Status::kOk);
+    EXPECT_TRUE(table.insert_row(1, {cd}).has_value());
     EXPECT_EQ(table.row_count(), 1);
 
     std::filesystem::remove_all(path);
@@ -62,7 +62,7 @@ TEST(TableTest, RowCountAfterInsert)
         cd.data = reinterpret_cast<const std::byte *>(&val);
         cd.size = sizeof(val);
         cd.nulls = nullptr;
-        EXPECT_EQ(table.insert_row(static_cast<Timestamp>(i + 1), {cd}), Status::kOk);
+        EXPECT_TRUE(table.insert_row(static_cast<Timestamp>(i + 1), {cd}).has_value());
     }
     EXPECT_EQ(table.row_count(), 5);
 
@@ -88,7 +88,7 @@ TEST(TableTest, WrongColumnCount)
     cd.size = sizeof(val);
     cd.nulls = nullptr;
 
-    EXPECT_EQ(table.insert_row(1, {cd}), Status::kInvalidArgument);
+    EXPECT_EQ(table.insert_row(1, {cd}).error().code, Status::kInvalidArgument);
 
     std::filesystem::remove_all(path);
 }
@@ -114,7 +114,7 @@ TEST(TableTest, VersionIndexAfterInsert)
         cd.size = sizeof(val);
         cd.nulls = nullptr;
 
-        EXPECT_EQ(table.insert_row(static_cast<Timestamp>(i + 1), {cd}), Status::kOk);
+        EXPECT_TRUE(table.insert_row(static_cast<Timestamp>(i + 1), {cd}).has_value());
     }
 
     // Flush pending to ensure rows are in pages and version index

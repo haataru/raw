@@ -46,6 +46,9 @@ enum class TokenType
     kVacuum,
     kUpdate,
     kSet,
+    kBeginTxn,
+    kCommitTxn,
+    kRollbackTxn,
     kEnd
 };
 
@@ -150,8 +153,12 @@ struct VacuumStmt
     std::string table_name;
 };
 
+struct BeginStmt {};
+struct CommitStmt {};
+struct RollbackStmt {};
+
 using Statement =
-    std::variant<InsertStmt, SelectStmt, DeleteStmt, UpdateStmt, CreateStmt, CreateIndexStmt, VacuumStmt>;
+    std::variant<InsertStmt, SelectStmt, DeleteStmt, UpdateStmt, CreateStmt, CreateIndexStmt, VacuumStmt, BeginStmt, CommitStmt, RollbackStmt>;
 
 // ──────────────────────────────────────────────
 // Parser
@@ -181,6 +188,9 @@ private:
     auto parse_create() -> StatusOr<Statement>;
     auto parse_create_index() -> StatusOr<CreateIndexStmt>;
     auto parse_vacuum() -> StatusOr<VacuumStmt>;
+    auto parse_begin() -> StatusOr<BeginStmt>;
+    auto parse_commit() -> StatusOr<CommitStmt>;
+    auto parse_rollback() -> StatusOr<RollbackStmt>;
     auto parse_values() -> StatusOr<std::vector<Value>>;
     auto parse_value() -> StatusOr<Value>;
     auto parse_predicate() -> StatusOr<Predicate>;

@@ -179,6 +179,7 @@ auto Database::open(const std::filesystem::path &path) -> Status
     }
 
     flush_handler_ = std::make_unique<FlushHandler>(tables_, tables_mtx_);
+    txn_manager_ = std::make_unique<TransactionManager>(timestamps_);
     gc_ = std::make_unique<GarbageCollector>(tables_, tables_mtx_, timestamps_, watermarks_);
     gc_->start();
 
@@ -245,13 +246,25 @@ auto Database::create_table(const std::string &name, Schema schema) -> StatusOr<
     return id;
 }
 
-auto Database::insert(TableId table_id, const std::vector<ColumnData> &columns) -> Status
+auto Database::insert(TableId table_id, const std::vector<ColumnData> &columns, const std::shared_ptr<Transaction>& txn) -> StatusOr<RowId>
 {
     if (table_id >= tables_.size()) {
-        return Status::kInvalidArgument;
+        return std::unexpected(Status::kInvalidArgument);
     }
 
-    return tables_[table_id].insert_row(timestamps_, columns);
+    Lsn lsn = wal_writer_.append_insert(txn ? txn->tx_id : kInvalidTxId, table_id, columns);
+    tables_[table_id].set_lsn(lsn);
+
+    StatusOr<RowId> res;
+    if (txn) {
+        res = tables_[table_id].insert_row(txn->tx_id | kTxIdFlag, columns);
+        if (res) {
+            txn->write_set[table_id].push_back(*res);
+        }
+    } else {
+        res = tables_[table_id].insert_row(timestamps_, columns);
+    }
+    return res;
 }
 
 auto Database::vacuum(TableId table_id) -> Status
@@ -350,13 +363,16 @@ auto Database::vacuum(TableId table_id) -> Status
     return Status::kOk;
 }
 
-auto Database::delete_rows(TableId table_id, std::vector<RowId> row_ids) -> Status
+auto Database::delete_rows(TableId table_id, std::vector<RowId> row_ids, const std::shared_ptr<Transaction>& txn) -> Status
 {
     if (table_id >= tables_.size()) {
         return Status::kInvalidArgument;
     }
 
-    Timestamp ts = timestamps_.allocate_ts();
+    Lsn lsn = wal_writer_.append_delete(txn ? txn->tx_id : kInvalidTxId, table_id, row_ids);
+    tables_[table_id].set_lsn(lsn);
+
+    Timestamp ts = txn ? (txn->tx_id | kTxIdFlag) : timestamps_.allocate_ts();
 
     std::vector<IndexEntry> entries;
     entries.reserve(row_ids.size());
@@ -365,6 +381,12 @@ auto Database::delete_rows(TableId table_id, std::vector<RowId> row_ids) -> Stat
     }
 
     tables_[table_id].insert_version_entries(entries.data(), entries.size());
+    
+    if (txn) {
+        auto& ws = txn->write_set[table_id];
+        ws.insert(ws.end(), row_ids.begin(), row_ids.end());
+    }
+
     return Status::kOk;
 }
 

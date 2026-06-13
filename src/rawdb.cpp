@@ -7,7 +7,9 @@
 #include "core/config.hpp"
 #include "core/error.hpp"
 #include "core/types.hpp"
+#include "core/types.hpp"
 #include "db/database.hpp"
+#include "query/connection.hpp"
 #include "query/executor.hpp"
 
 struct rawdb_t
@@ -46,7 +48,8 @@ int rawdb_execute(rawdb_t *db, const char *sql, rawdb_result_t **out_result)
     if (!db || !sql)
         return -1;
 
-    rawdb::Executor exec(db->db);
+    rawdb::Connection conn(db->db);
+    rawdb::Executor exec(conn);
     auto r = exec.execute(sql);
     if (!r) {
         db->errmsg = std::string(rawdb::status_message(r.error().code));

@@ -25,6 +25,8 @@ set(RAWDB_SOURCES
     src/mvcc/version_index.cpp
     src/mvcc/gc.cpp
     src/db/database.cpp
+    src/db/transaction.cpp
+    src/recovery/wal.cpp
     src/index/btree.cpp
     src/query/parser.cpp
     src/query/executor.cpp

@@ -18,7 +18,8 @@ TEST(ExecutorTest, InsertAndSelect)
     schema.names = {"id", "name"};
     *db.create_table("users", schema);
 
-    Executor exec(db);
+    Connection conn(db);
+    Executor exec(conn);
     auto res = exec.execute("INSERT INTO users VALUES (1, 'alice')");
     ASSERT_TRUE(res.has_value());
     EXPECT_EQ(res->rows.size(), 1);
@@ -49,7 +50,8 @@ TEST(ExecutorTest, InsertMultipleRows)
     schema.names = {"x", "y"};
     *db.create_table("points", schema);
 
-    Executor exec(db);
+    Connection conn(db);
+    Executor exec(conn);
     auto res = exec.execute("INSERT INTO points VALUES (10, 3.14), (20, 6.28)");
     ASSERT_TRUE(res.has_value());
 
@@ -77,7 +79,8 @@ TEST(ExecutorTest, SelectWithFilter)
     schema.names = {"id", "name"};
     *db.create_table("users", schema);
 
-    Executor exec(db);
+    Connection conn(db);
+    Executor exec(conn);
     exec.execute("INSERT INTO users VALUES (1, 'alice')");
     exec.execute("INSERT INTO users VALUES (2, 'bob')");
     exec.execute("INSERT INTO users VALUES (3, 'charlie')");
@@ -104,7 +107,8 @@ TEST(ExecutorTest, SelectSpecificColumns)
     schema.names = {"id", "name", "score"};
     *db.create_table("users", schema);
 
-    Executor exec(db);
+    Connection conn(db);
+    Executor exec(conn);
     exec.execute("INSERT INTO users VALUES (1, 'alice', 95.5)");
 
     auto sel = exec.execute("SELECT name, id FROM users WHERE name = 'alice'");
@@ -127,7 +131,8 @@ TEST(ExecutorTest, UnknownTable)
     std::filesystem::remove_all(path);
     ASSERT_EQ(db.open(path), Status::kOk);
 
-    Executor exec(db);
+    Connection conn(db);
+    Executor exec(conn);
     auto res = exec.execute("SELECT * FROM nonexistent");
     EXPECT_FALSE(res.has_value());
 
@@ -147,7 +152,8 @@ TEST(ExecutorTest, DeleteWithFilter)
     schema.names = {"id", "name"};
     *db.create_table("users", schema);
 
-    Executor exec(db);
+    Connection conn(db);
+    Executor exec(conn);
     exec.execute("INSERT INTO users VALUES (1, 'alice')");
     exec.execute("INSERT INTO users VALUES (2, 'bob')");
     exec.execute("INSERT INTO users VALUES (3, 'charlie')");
@@ -183,7 +189,8 @@ TEST(ExecutorTest, DeleteAllRows)
     schema.names = {"val"};
     *db.create_table("nums", schema);
 
-    Executor exec(db);
+    Connection conn(db);
+    Executor exec(conn);
     exec.execute("INSERT INTO nums VALUES (10)");
     exec.execute("INSERT INTO nums VALUES (20)");
     exec.execute("INSERT INTO nums VALUES (30)");
@@ -212,7 +219,8 @@ TEST(ExecutorTest, SelectWithOrderBy)
     schema.names = {"id", "name"};
     *db.create_table("users", schema);
 
-    Executor exec(db);
+    Connection conn(db);
+    Executor exec(conn);
     exec.execute("INSERT INTO users VALUES (2, 'bob')");
     exec.execute("INSERT INTO users VALUES (1, 'alice')");
     exec.execute("INSERT INTO users VALUES (3, 'charlie')");
@@ -240,7 +248,8 @@ TEST(ExecutorTest, SelectWithOrderByDesc)
     schema.names = {"id", "name"};
     *db.create_table("users", schema);
 
-    Executor exec(db);
+    Connection conn(db);
+    Executor exec(conn);
     exec.execute("INSERT INTO users VALUES (1, 'alice')");
     exec.execute("INSERT INTO users VALUES (2, 'bob')");
     exec.execute("INSERT INTO users VALUES (3, 'charlie')");
@@ -268,7 +277,8 @@ TEST(ExecutorTest, SelectWithLimit)
     schema.names = {"x"};
     *db.create_table("nums", schema);
 
-    Executor exec(db);
+    Connection conn(db);
+    Executor exec(conn);
     exec.execute("INSERT INTO nums VALUES (10)");
     exec.execute("INSERT INTO nums VALUES (20)");
     exec.execute("INSERT INTO nums VALUES (30)");
@@ -293,7 +303,8 @@ TEST(ExecutorTest, SelectWithOrderByAndLimit)
     schema.names = {"id", "name"};
     *db.create_table("users", schema);
 
-    Executor exec(db);
+    Connection conn(db);
+    Executor exec(conn);
     exec.execute("INSERT INTO users VALUES (3, 'charlie')");
     exec.execute("INSERT INTO users VALUES (1, 'alice')");
     exec.execute("INSERT INTO users VALUES (2, 'bob')");
@@ -320,7 +331,8 @@ TEST(ExecutorTest, OrderByVarCharUtf8)
     schema.names = {"id", "name"};
     *db.create_table("users", schema);
 
-    Executor exec(db);
+    Connection conn(db);
+    Executor exec(conn);
     // Cyrillic: а < б < в in UTF-8 code-point order (U+0430 < U+0431 < U+0432)
     // Latin: a < b < c
     exec.execute("INSERT INTO users VALUES (3, '\xd0\xb2')"); // в
@@ -362,7 +374,8 @@ TEST(ExecutorTest, VacuumRemovesDeletedRows)
     schema.names = {"id", "name"};
     *db.create_table("users", schema);
 
-    Executor exec(db);
+    Connection conn(db);
+    Executor exec(conn);
     exec.execute("INSERT INTO users VALUES (1, 'alice')");
     exec.execute("INSERT INTO users VALUES (2, 'bob')");
     exec.execute("INSERT INTO users VALUES (3, 'charlie')");
@@ -396,7 +409,8 @@ TEST(ExecutorTest, VacuumAllRowsDeleted)
     schema.names = {"x"};
     *db.create_table("nums", schema);
 
-    Executor exec(db);
+    Connection conn(db);
+    Executor exec(conn);
     exec.execute("INSERT INTO nums VALUES (10)");
     exec.execute("INSERT INTO nums VALUES (20)");
 
@@ -425,7 +439,8 @@ TEST(ExecutorTest, VacuumNoDeletesIsNoOp)
     schema.names = {"x", "y"};
     *db.create_table("points", schema);
 
-    Executor exec(db);
+    Connection conn(db);
+    Executor exec(conn);
     exec.execute("INSERT INTO points VALUES (1, 1.5)");
     exec.execute("INSERT INTO points VALUES (2, 2.5)");
 
@@ -454,7 +469,8 @@ TEST(ExecutorTest, VacuumWithIndex)
     schema.names = {"id", "name"};
     *db.create_table("users", schema);
 
-    Executor exec(db);
+    Connection conn(db);
+    Executor exec(conn);
     exec.execute("INSERT INTO users VALUES (1, 'alice')");
     exec.execute("INSERT INTO users VALUES (2, 'bob')");
     exec.execute("INSERT INTO users VALUES (3, 'charlie')");
@@ -491,7 +507,8 @@ TEST(ExecutorTest, VacuumPersistence)
     schema.names = {"id", "name"};
     *db.create_table("users", schema);
 
-    Executor exec(db);
+    Connection conn(db);
+    Executor exec(conn);
     exec.execute("INSERT INTO users VALUES (1, 'alice')");
     exec.execute("INSERT INTO users VALUES (2, 'bob')");
     exec.execute("INSERT INTO users VALUES (3, 'charlie')");
@@ -504,7 +521,8 @@ TEST(ExecutorTest, VacuumPersistence)
     db.close();
 
     ASSERT_EQ(db.open(path), Status::kOk);
-    Executor exec2(db);
+    Connection conn2(db);
+    Executor exec2(conn2);
 
     auto sel = exec2.execute("SELECT * FROM users");
     ASSERT_TRUE(sel.has_value());
@@ -531,7 +549,8 @@ TEST(ExecutorTest, UpdateStatement)
     schema.names = {"id", "name", "score"};
     *db.create_table("users", schema);
 
-    Executor exec(db);
+    Connection conn(db);
+    Executor exec(conn);
     exec.execute("INSERT INTO users VALUES (1, 'alice', 95.5)");
     exec.execute("INSERT INTO users VALUES (2, 'bob', 80.0)");
     exec.execute("INSERT INTO users VALUES (3, 'charlie', 70.0)");
