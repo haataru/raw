@@ -1,4 +1,5 @@
 #include <cstring>
+#include <ctime>
 
 #include "query/executor.hpp"
 #include "storage/page.hpp"
@@ -25,6 +26,23 @@ auto Executor::value_to_string(const ColumnData &col,
         case ColumnType::kInt64: {
             auto *arr = static_cast<const int64_t *>(static_cast<const void *>(col.data));
             return std::to_string(arr[row_index]);
+        }
+        case ColumnType::kTimestamp: {
+            auto *arr = static_cast<const int64_t *>(static_cast<const void *>(col.data));
+            int64_t ts = arr[row_index];
+            std::time_t t = ts / 1000;
+#ifdef _WIN32
+            struct tm tm_buf;
+            gmtime_s(&tm_buf, &t);
+            struct tm* tm_ptr = &tm_buf;
+#else
+            struct tm tm_buf;
+            gmtime_r(&t, &tm_buf);
+            struct tm* tm_ptr = &tm_buf;
+#endif
+            char buf[32];
+            std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", tm_ptr);
+            return std::string(buf);
         }
         case ColumnType::kFloat64: {
             auto *arr = static_cast<const double *>(static_cast<const void *>(col.data));
@@ -174,6 +192,7 @@ auto Executor::index_lookup(Table &tbl, const Predicate &pred) -> std::optional<
                 std::memcpy(key_buf.data(), &v, sizeof(v));
                 break;
             }
+            case ColumnType::kTimestamp:
             case ColumnType::kInt64: {
                 int64_t v = std::holds_alternative<int64_t>(pred.value.data)
                                 ? std::get<int64_t>(pred.value.data)

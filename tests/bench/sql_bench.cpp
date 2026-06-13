@@ -155,7 +155,7 @@ static auto run_sql_benchmarks(bool /*quick*/) -> void
             auto &select = std::get<SelectStmt>(*stmt);
 
             auto t2 = clock::now();
-            auto index_rids = Executor::index_lookup(tbl, select.where);
+            auto index_rids = Executor::index_lookup(tbl, select.where->pred);
             auto t3 = clock::now();
 
             if (!index_rids) {

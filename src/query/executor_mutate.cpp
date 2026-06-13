@@ -60,6 +60,7 @@ auto Executor::execute_insert(const InsertStmt &stmt) -> StatusOr<QueryResult>
                     std::memcpy(bufs[ci].data(), &v, sizeof(v));
                     break;
                 }
+                case ColumnType::kTimestamp:
                 case ColumnType::kInt64: {
                     int64_t v = 0;
                     if (std::holds_alternative<int64_t>(val.data)) {
@@ -188,7 +189,7 @@ auto Executor::execute_delete(const DeleteStmt &stmt) -> StatusOr<QueryResult>
     std::vector<RowId> target_rows;
     Timestamp read_ts = conn_.txn() ? conn_.txn()->read_ts : conn_.db().next_ts();
     if (stmt.has_where) {
-        auto matching = Filter::evaluate(scan->columns, schema, row_count, stmt.where);
+        auto matching = Filter::evaluate(scan->columns, schema, row_count, stmt.where.get());
         if (!matching)
             return std::unexpected(matching.error());
         for (auto row_idx : *matching) {
@@ -230,6 +231,7 @@ static auto bytes_to_value(const ColumnData &col, ColumnType type, size_t row_id
         case ColumnType::kInt32:
             v.data = static_cast<int64_t>(static_cast<const int32_t *>(static_cast<const void *>(col.data))[row_idx]);
             break;
+        case ColumnType::kTimestamp:
         case ColumnType::kInt64:
             v.data = static_cast<const int64_t *>(static_cast<const void *>(col.data))[row_idx];
             break;
@@ -294,7 +296,7 @@ auto Executor::execute_update(const UpdateStmt &stmt) -> StatusOr<QueryResult>
     std::vector<RowId> target_rows;
     Timestamp read_ts = conn_.txn() ? conn_.txn()->read_ts : conn_.db().next_ts();
     if (stmt.has_where) {
-        auto matching = Filter::evaluate(scan->columns, schema, row_count, stmt.where);
+        auto matching = Filter::evaluate(scan->columns, schema, row_count, stmt.where.get());
         if (!matching)
             return std::unexpected(matching.error());
         for (auto row_idx : *matching) {

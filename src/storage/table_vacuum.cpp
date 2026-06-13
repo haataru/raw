@@ -126,6 +126,7 @@ auto Table::vacuum(TimestampAllocator &timestamps) -> StatusOr<size_t>
                         case ColumnType::kInt32:
                             es = 4;
                             break;
+                        case ColumnType::kTimestamp:
                         case ColumnType::kInt64:
                             es = 8;
                             break;

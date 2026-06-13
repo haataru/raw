@@ -101,9 +101,10 @@ TEST(ParserTest, SelectWithWhere)
     auto *stmt = std::get_if<SelectStmt>(&*res);
     ASSERT_NE(stmt, nullptr);
     EXPECT_TRUE(stmt->has_where);
-    EXPECT_EQ(stmt->where.column.name, "age");
-    EXPECT_EQ(stmt->where.op, rawdb::CmpOp::kGe);
-    EXPECT_EQ(std::get<int64_t>(stmt->where.value.data), 18);
+    EXPECT_EQ(stmt->where->type, rawdb::ExprNode::Type::kPredicate);
+    EXPECT_EQ(stmt->where->pred.column.name, "age");
+    EXPECT_EQ(stmt->where->pred.op, rawdb::CmpOp::kGe);
+    EXPECT_EQ(std::get<int64_t>(stmt->where->pred.value.data), 18);
 }
 
 // ──────────────────────────────────────────────
@@ -129,9 +130,10 @@ TEST(ParserTest, DeleteWithWhere)
     auto *stmt = std::get_if<DeleteStmt>(&*res);
     ASSERT_NE(stmt, nullptr);
     EXPECT_TRUE(stmt->has_where);
-    EXPECT_EQ(stmt->where.column.name, "name");
-    EXPECT_EQ(stmt->where.op, rawdb::CmpOp::kEq);
-    EXPECT_EQ(std::get<std::string>(stmt->where.value.data), "bob");
+    EXPECT_EQ(stmt->where->type, rawdb::ExprNode::Type::kPredicate);
+    EXPECT_EQ(stmt->where->pred.column.name, "name");
+    EXPECT_EQ(stmt->where->pred.op, rawdb::CmpOp::kEq);
+    EXPECT_EQ(std::get<std::string>(stmt->where->pred.value.data), "bob");
 }
 
 // ──────────────────────────────────────────────

@@ -29,6 +29,7 @@ enum class ColumnType : uint8_t
     kFloat64 = 2,
     kBool = 3,
     kVarChar = 4,
+    kTimestamp = 5,
 };
 
 struct ColumnData

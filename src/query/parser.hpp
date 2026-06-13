@@ -43,6 +43,7 @@ enum class TokenType
     kAsc,
     kDesc,
     kLimit,
+    kOffset,
     kVacuum,
     kUpdate,
     kSet,
@@ -57,6 +58,9 @@ enum class TokenType
     kGroup,
     kJoin,
     kDot,
+    kAnd,
+    kOr,
+    kIn,
     kEnd
 };
 
@@ -107,7 +111,8 @@ enum class CmpOp : uint8_t
     kLt,
     kGt,
     kLe,
-    kGe
+    kGe,
+    kIn
 };
 
 struct Predicate
@@ -115,6 +120,16 @@ struct Predicate
     ColumnRef column;
     CmpOp op;
     Value value;
+    std::vector<Value> in_values; // For IN
+};
+
+struct ExprNode
+{
+    enum class Type { kPredicate, kAnd, kOr };
+    Type type;
+    Predicate pred;
+    std::unique_ptr<ExprNode> left;
+    std::unique_ptr<ExprNode> right;
 };
 
 struct InsertStmt
@@ -133,7 +148,7 @@ struct SelectStmt
 {
     std::vector<ColumnRef> columns; // empty = *
     std::string table_name;
-    Predicate where;
+    std::unique_ptr<ExprNode> where;
     bool has_where{false};
     std::vector<ColumnRef> group_by;
     JoinClause join_clause{};
@@ -142,12 +157,14 @@ struct SelectStmt
     bool has_order_by{false};
     size_t limit_count{0};
     bool has_limit{false};
+    size_t offset_count{0};
+    bool has_offset{false};
 };
 
 struct DeleteStmt
 {
     std::string table_name;
-    Predicate where;
+    std::unique_ptr<ExprNode> where;
     bool has_where{false};
 };
 
@@ -156,7 +173,7 @@ struct UpdateStmt
     std::string table_name;
     std::string column_name;
     Value new_value;
-    Predicate where;
+    std::unique_ptr<ExprNode> where;
     bool has_where{false};
 };
 
@@ -222,10 +239,15 @@ private:
     auto parse_begin() -> StatusOr<BeginStmt>;
     auto parse_commit() -> StatusOr<CommitStmt>;
     auto parse_rollback() -> StatusOr<RollbackStmt>;
-    auto parse_values() -> StatusOr<std::vector<Value>>;
-    auto parse_value() -> StatusOr<Value>;
+
+    auto parse_expr() -> StatusOr<std::unique_ptr<ExprNode>>;
+    auto parse_expr_and() -> StatusOr<std::unique_ptr<ExprNode>>;
+    auto parse_expr_primary() -> StatusOr<std::unique_ptr<ExprNode>>;
+
     auto parse_predicate() -> StatusOr<Predicate>;
     auto parse_column_ref() -> StatusOr<ColumnRef>;
+    auto parse_values() -> StatusOr<std::vector<Value>>;
+    auto parse_value() -> StatusOr<Value>;
 };
 
 } // namespace rawdb

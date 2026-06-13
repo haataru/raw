@@ -12,6 +12,7 @@ static size_t column_elem_size(ColumnType ct)
     switch (ct) {
         case ColumnType::kInt32:
             return 4;
+        case ColumnType::kTimestamp:
         case ColumnType::kInt64:
             return 8;
         case ColumnType::kFloat64:

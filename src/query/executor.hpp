@@ -35,7 +35,7 @@ public:
     [[nodiscard]] static auto evaluate(const std::vector<ColumnData> &columns,
                                        const Schema &schema,
                                        size_t row_count,
-                                       const Predicate &pred) -> StatusOr<std::vector<size_t>>;
+                                       const ExprNode *expr) -> StatusOr<std::vector<size_t>>;
 
     [[nodiscard]] static auto match_count(const std::vector<ColumnData> &columns,
                                           const Schema &schema,

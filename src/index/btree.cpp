@@ -37,6 +37,7 @@ auto BTree::compare_keys(const std::byte *a,
             std::memcpy(&vb, b, sizeof(vb));
             return (va > vb) - (va < vb);
         }
+        case ColumnType::kTimestamp:
         case ColumnType::kInt64: {
             if (a_len < sizeof(int64_t) || b_len < sizeof(int64_t))
                 return 0;
@@ -91,6 +92,7 @@ void BTree::compute_layout()
         case ColumnType::kInt32:
             slot_key_size_ = 4;
             break;
+        case ColumnType::kTimestamp:
         case ColumnType::kInt64:
             slot_key_size_ = 8;
             break;

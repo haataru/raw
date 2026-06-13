@@ -388,6 +388,7 @@ auto Database::vacuum(TableId table_id) -> Status
                         case ColumnType::kInt32:
                             elem_size = 4;
                             break;
+                        case ColumnType::kTimestamp:
                         case ColumnType::kInt64:
                             elem_size = 8;
                             break;

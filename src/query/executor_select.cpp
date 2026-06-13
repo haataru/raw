@@ -21,6 +21,10 @@ static auto compare_column_values(const ColumnData &col,
             auto *arr = static_cast<const int64_t *>(static_cast<const void *>(col.data));
             return (arr[a] < arr[b]) ? -1 : (arr[a] > arr[b] ? 1 : 0);
         }
+        case ColumnType::kTimestamp: {
+            auto *arr = static_cast<const int64_t *>(static_cast<const void *>(col.data));
+            return (arr[a] < arr[b]) ? -1 : (arr[a] > arr[b] ? 1 : 0);
+        }
         case ColumnType::kFloat64: {
             auto *arr = static_cast<const double *>(static_cast<const void *>(col.data));
             if (arr[a] < arr[b])
@@ -170,8 +174,8 @@ auto Executor::execute_select(const SelectStmt &stmt) -> StatusOr<QueryResult>
     bool index_used = false;
     TableScanResult full_scan;
 
-    if (!stmt.has_order_by && stmt.has_where && stmt.where.op == CmpOp::kEq) {
-        auto index_rids = index_lookup(tbl, stmt.where);
+    if (!stmt.has_order_by && stmt.has_where && stmt.where->type == ExprNode::Type::kPredicate && stmt.where->pred.op == CmpOp::kEq) {
+        auto index_rids = index_lookup(tbl, stmt.where->pred);
         if (index_rids.has_value()) {
             index_used = true;
             for (auto rid : *index_rids) {
@@ -193,7 +197,7 @@ auto Executor::execute_select(const SelectStmt &stmt) -> StatusOr<QueryResult>
 
         std::vector<size_t> matching;
         if (stmt.has_where) {
-            auto filtered = Filter::evaluate(full_scan.columns, schema, row_count, stmt.where);
+            auto filtered = Filter::evaluate(full_scan.columns, schema, row_count, stmt.where.get());
             if (!filtered)
                 return std::unexpected(filtered.error());
             matching = std::move(*filtered);
@@ -221,6 +225,14 @@ auto Executor::execute_select(const SelectStmt &stmt) -> StatusOr<QueryResult>
                                                 row_count);
                 return stmt.order_by.asc ? (cmp < 0) : (cmp > 0);
             });
+        }
+    }
+
+    if (stmt.has_offset && stmt.offset_count > 0 && !is_agg) {
+        if (stmt.offset_count >= visible.size()) {
+            visible.clear();
+        } else {
+            visible.erase(visible.begin(), visible.begin() + static_cast<ptrdiff_t>(stmt.offset_count));
         }
     }
 
@@ -352,6 +364,13 @@ auto Executor::execute_select(const SelectStmt &stmt) -> StatusOr<QueryResult>
             result.rows.push_back(std::move(row));
         }
         
+        if (stmt.has_offset && stmt.offset_count > 0) {
+            if (stmt.offset_count >= result.rows.size()) {
+                result.rows.clear();
+            } else {
+                result.rows.erase(result.rows.begin(), result.rows.begin() + static_cast<ptrdiff_t>(stmt.offset_count));
+            }
+        }
         if (stmt.has_limit && result.rows.size() > stmt.limit_count) {
             result.rows.resize(stmt.limit_count);
         }
@@ -533,6 +552,17 @@ auto Executor::execute_join(const SelectStmt &stmt) -> StatusOr<QueryResult>
             }
             result.rows.push_back(std::move(row_out));
         }
+    }
+
+    if (stmt.has_offset && stmt.offset_count > 0) {
+        if (stmt.offset_count >= result.rows.size()) {
+            result.rows.clear();
+        } else {
+            result.rows.erase(result.rows.begin(), result.rows.begin() + static_cast<ptrdiff_t>(stmt.offset_count));
+        }
+    }
+    if (stmt.has_limit && result.rows.size() > stmt.limit_count) {
+        result.rows.resize(stmt.limit_count);
     }
 
     return result;

@@ -10,6 +10,7 @@ static auto fixed_column_size(ColumnType type) -> size_t
     switch (type) {
         case ColumnType::kInt32:
             return 4;
+        case ColumnType::kTimestamp:
         case ColumnType::kInt64:
             return 8;
         case ColumnType::kFloat64:

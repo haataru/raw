@@ -47,6 +47,8 @@ static auto is_keyword(std::string_view s) -> TokenType
         return TokenType::kDesc;
     if (s == "limit")
         return TokenType::kLimit;
+    if (s == "offset")
+        return TokenType::kOffset;
     if (s == "vacuum")
         return TokenType::kVacuum;
     if (s == "update")
@@ -73,7 +75,14 @@ static auto is_keyword(std::string_view s) -> TokenType
         return TokenType::kGroup;
     if (s == "join")
         return TokenType::kJoin;
-    // on is already above
+    if (s == "on")
+        return TokenType::kOn;
+    if (s == "and")
+        return TokenType::kAnd;
+    if (s == "or")
+        return TokenType::kOr;
+    if (s == "in")
+        return TokenType::kIn;
     return TokenType::kIdentifier;
 }
 
@@ -402,10 +411,10 @@ auto Parser::parse_select() -> StatusOr<SelectStmt>
 
     if (peek() == TokenType::kWhere) {
         next_token();
-        auto pred = parse_predicate();
-        if (!pred)
-            return std::unexpected(pred.error());
-        stmt.where = std::move(*pred);
+        auto expr = parse_expr();
+        if (!expr)
+            return std::unexpected(expr.error());
+        stmt.where = std::move(*expr);
         stmt.has_where = true;
     }
 
@@ -450,16 +459,18 @@ auto Parser::parse_select() -> StatusOr<SelectStmt>
         auto st2 = consume(TokenType::kLimit);
         if (st2 != Status::kOk)
             return std::unexpected(st2);
-        if (peek() != TokenType::kNumber) {
-            return std::unexpected(Status::kInvalidArgument);
-        }
-        auto [ptr, ec] = std::from_chars(current_.text.data(),
-                                         current_.text.data() + current_.text.size(),
-                                         stmt.limit_count);
-        if (ec != std::errc())
-            return std::unexpected(Status::kInvalidArgument);
-        next_token();
+        if (peek() != TokenType::kNumber) { std::cout << "Error at line: " << __LINE__ << std::endl; return std::unexpected(Status::kInvalidArgument); }
+        stmt.limit_count = std::stoull(current_.text);
         stmt.has_limit = true;
+        next_token();
+        
+        if (peek() == TokenType::kOffset) {
+            next_token();
+            if (peek() != TokenType::kNumber) { std::cout << "Error at line: " << __LINE__ << std::endl; return std::unexpected(Status::kInvalidArgument); }
+            stmt.offset_count = std::stoull(current_.text);
+            stmt.has_offset = true;
+            next_token();
+        }
     }
 
     return stmt;
@@ -485,10 +496,10 @@ auto Parser::parse_delete() -> StatusOr<DeleteStmt>
 
     if (peek() == TokenType::kWhere) {
         next_token();
-        auto pred = parse_predicate();
-        if (!pred)
-            return std::unexpected(pred.error());
-        stmt.where = std::move(*pred);
+        auto expr = parse_expr();
+        if (!expr)
+            return std::unexpected(expr.error());
+        stmt.where = std::move(*expr);
         stmt.has_where = true;
     }
 
@@ -531,10 +542,10 @@ auto Parser::parse_update() -> StatusOr<UpdateStmt>
 
     if (peek() == TokenType::kWhere) {
         next_token();
-        auto pred = parse_predicate();
-        if (!pred)
-            return std::unexpected(pred.error());
-        stmt.where = std::move(*pred);
+        auto expr = parse_expr();
+        if (!expr)
+            return std::unexpected(expr.error());
+        stmt.where = std::move(*expr);
         stmt.has_where = true;
     }
 
@@ -569,17 +580,95 @@ auto Parser::parse_predicate() -> StatusOr<Predicate>
         case TokenType::kGe:
             pred.op = CmpOp::kGe;
             break;
+        case TokenType::kIn:
+            pred.op = CmpOp::kIn;
+            break;
         default:
             return std::unexpected(Status::kInvalidArgument);
     }
     next_token();
 
-    auto val = parse_value();
-    if (!val)
-        return std::unexpected(val.error());
-    pred.value = std::move(*val);
+    if (pred.op == CmpOp::kIn) {
+        auto st = consume(TokenType::kLParen);
+        if (st != Status::kOk) return std::unexpected(st);
+        do {
+            auto val = parse_value();
+            if (!val) return std::unexpected(val.error());
+            pred.in_values.push_back(std::move(*val));
+        } while (peek() == TokenType::kComma && (consume(TokenType::kComma), true));
+        st = consume(TokenType::kRParen);
+        if (st != Status::kOk) return std::unexpected(st);
+    } else {
+        auto val = parse_value();
+        if (!val)
+            return std::unexpected(val.error());
+        pred.value = std::move(*val);
+    }
 
     return pred;
+}
+
+auto Parser::parse_expr() -> StatusOr<std::unique_ptr<ExprNode>>
+{
+    auto left = parse_expr_and();
+    if (!left) return left;
+
+    auto node = std::move(*left);
+
+    while (peek() == TokenType::kOr) {
+        next_token();
+        auto right = parse_expr_and();
+        if (!right) return right;
+
+        auto parent = std::make_unique<ExprNode>();
+        parent->type = ExprNode::Type::kOr;
+        parent->left = std::move(node);
+        parent->right = std::move(*right);
+        node = std::move(parent);
+    }
+    return node;
+}
+
+auto Parser::parse_expr_and() -> StatusOr<std::unique_ptr<ExprNode>>
+{
+    auto left = parse_expr_primary();
+    if (!left) return left;
+
+    auto node = std::move(*left);
+
+    while (peek() == TokenType::kAnd) {
+        next_token();
+        auto right = parse_expr_primary();
+        if (!right) return right;
+
+        auto parent = std::make_unique<ExprNode>();
+        parent->type = ExprNode::Type::kAnd;
+        parent->left = std::move(node);
+        parent->right = std::move(*right);
+        node = std::move(parent);
+    }
+    return node;
+}
+
+auto Parser::parse_expr_primary() -> StatusOr<std::unique_ptr<ExprNode>>
+{
+    if (peek() == TokenType::kLParen) {
+        next_token();
+        auto expr = parse_expr();
+        if (!expr) return expr;
+        if (consume(TokenType::kRParen) != Status::kOk) {
+            return std::unexpected(Status::kInvalidArgument);
+        }
+        return expr;
+    }
+
+    auto pred = parse_predicate();
+    if (!pred) return std::unexpected(pred.error());
+
+    auto node = std::make_unique<ExprNode>();
+    node->type = ExprNode::Type::kPredicate;
+    node->pred = std::move(*pred);
+    return node;
 }
 
 auto Parser::parse_column_ref() -> StatusOr<ColumnRef>
@@ -695,6 +784,9 @@ auto Parser::parse_create() -> StatusOr<Statement>
             }
             else if (type_text == "bool" || type_text == "boolean") {
                 col.type = ColumnType::kBool;
+            }
+            else if (type_text == "timestamp") {
+                col.type = ColumnType::kTimestamp;
             }
             else {
                 col.type = ColumnType::kVarChar;

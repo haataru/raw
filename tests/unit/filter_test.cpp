@@ -33,7 +33,11 @@ TEST(FilterTest, Int32Eq)
     pred.op = CmpOp::kEq;
     pred.value = Value{int64_t(30)};
 
-    auto res = Filter::evaluate(cols, schema, 5, pred);
+    rawdb::ExprNode expr;
+    expr.type = rawdb::ExprNode::Type::kPredicate;
+    expr.pred = pred;
+
+    auto res = Filter::evaluate(cols, schema, 5, &expr);
     ASSERT_TRUE(res.has_value());
     ASSERT_EQ(res->size(), 1);
     EXPECT_EQ((*res)[0], 2);
@@ -55,7 +59,11 @@ TEST(FilterTest, Int32Gt)
     pred.op = CmpOp::kGt;
     pred.value = Value{int64_t(25)};
 
-    auto res = Filter::evaluate(cols, schema, 5, pred);
+    rawdb::ExprNode expr;
+    expr.type = rawdb::ExprNode::Type::kPredicate;
+    expr.pred = pred;
+
+    auto res = Filter::evaluate(cols, schema, 5, &expr);
     ASSERT_TRUE(res.has_value());
     ASSERT_EQ(res->size(), 3);
     EXPECT_EQ((*res)[0], 2);
@@ -83,7 +91,11 @@ TEST(FilterTest, Int64Range)
     pred.op = CmpOp::kLe;
     pred.value = Value{int64_t(200)};
 
-    auto res = Filter::evaluate(cols, schema, 4, pred);
+    rawdb::ExprNode expr;
+    expr.type = rawdb::ExprNode::Type::kPredicate;
+    expr.pred = pred;
+
+    auto res = Filter::evaluate(cols, schema, 4, &expr);
     ASSERT_TRUE(res.has_value());
     ASSERT_EQ(res->size(), 2);
     EXPECT_EQ((*res)[0], 0);
@@ -110,7 +122,11 @@ TEST(FilterTest, Float64Ne)
     pred.op = CmpOp::kNe;
     pred.value = Value{double(2.5)};
 
-    auto res = Filter::evaluate(cols, schema, 3, pred);
+    rawdb::ExprNode expr;
+    expr.type = rawdb::ExprNode::Type::kPredicate;
+    expr.pred = pred;
+
+    auto res = Filter::evaluate(cols, schema, 3, &expr);
     ASSERT_TRUE(res.has_value());
     ASSERT_EQ(res->size(), 2);
     EXPECT_EQ((*res)[0], 0);
@@ -139,7 +155,11 @@ TEST(FilterTest, SkipNulls)
     pred.op = CmpOp::kEq;
     pred.value = Value{int64_t(2)};
 
-    auto res = Filter::evaluate(cols, schema, 4, pred);
+    rawdb::ExprNode expr;
+    expr.type = rawdb::ExprNode::Type::kPredicate;
+    expr.pred = pred;
+
+    auto res = Filter::evaluate(cols, schema, 4, &expr);
     ASSERT_TRUE(res.has_value());
     ASSERT_EQ(res->size(), 1);
     EXPECT_EQ((*res)[0], 1);
@@ -174,7 +194,11 @@ TEST(FilterTest, VarCharEq)
     pred.op = CmpOp::kEq;
     pred.value = Value{std::string("bob")};
 
-    auto res = Filter::evaluate(cols, schema, 3, pred);
+    rawdb::ExprNode expr;
+    expr.type = rawdb::ExprNode::Type::kPredicate;
+    expr.pred = pred;
+
+    auto res = Filter::evaluate(cols, schema, 3, &expr);
     ASSERT_TRUE(res.has_value());
     ASSERT_EQ(res->size(), 1);
     EXPECT_EQ((*res)[0], 1);
@@ -200,6 +224,10 @@ TEST(FilterTest, ColumnNotFound)
     pred.op = CmpOp::kEq;
     pred.value = Value{int64_t(1)};
 
-    auto res = Filter::evaluate(cols, schema, 2, pred);
+    rawdb::ExprNode expr;
+    expr.type = rawdb::ExprNode::Type::kPredicate;
+    expr.pred = pred;
+
+    auto res = Filter::evaluate(cols, schema, 2, &expr);
     EXPECT_FALSE(res.has_value());
 }

@@ -96,6 +96,7 @@ void Repl::handle_meta_command(const std::string& cmd)
                     std::cout << "  " << schema.names[c] << " ";
                     switch(schema.columns[c]) {
                         case ColumnType::kInt32: std::cout << "INT32"; break;
+                        case ColumnType::kTimestamp: std::cout << "TIMESTAMP"; break;
                         case ColumnType::kInt64: std::cout << "INT64"; break;
                         case ColumnType::kFloat64: std::cout << "FLOAT64"; break;
                         case ColumnType::kBool: std::cout << "BOOL"; break;
