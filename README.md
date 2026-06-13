@@ -42,7 +42,8 @@ Cassandra — сложный кластер, требующий DevOps. SQLite �
 1. 🏛️ **[Архитектура и внутреннее устройство](docs/architecture.md)** — Storage, MVCC, WAL, GC, Checkpoints.
 2. 📝 **[Диалект SQL](docs/sql_dialect.md)** — Типы данных, DDL, DML, DQL (SELECT, GROUP BY, агрегации).
 3. 🐍 **[Интеграция Python](docs/python_api.md)** — Установка, примеры использования из Python-скриптов.
-4. ⚙️ **[Интеграция C / C++](docs/cpp_c_api.md)** — Подключение статической библиотеки и работа через C/C++ API.
+4. 💻 **[Command Line Interface (CLI)](docs/cli.md)** — Интерактивный REPL терминал (rawdb_cli) для управления базой данных без кода.
+5. ⚙️ **[Интеграция C / C++](docs/cpp_c_api.md)** — Подключение статической библиотеки и работа через C/C++ API.
 
 ---
 

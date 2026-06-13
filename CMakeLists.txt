@@ -116,6 +116,18 @@ add_executable(stress_test tests/bench/stress_test.cpp)
 target_link_libraries(stress_test PRIVATE rawdb)
 
 # ──────────────────────────────────────────────
+# CLI Executable
+# ──────────────────────────────────────────────
+add_executable(rawdb_cli 
+    src/cli/main.cpp 
+    src/cli/repl.cpp 
+    src/cli/formatter.cpp
+)
+target_link_libraries(rawdb_cli PRIVATE rawdb)
+target_include_directories(rawdb_cli PRIVATE src)
+rawdb_set_strict_options(rawdb_cli)
+
+# ──────────────────────────────────────────────
 # Python Bindings
 # ──────────────────────────────────────────────
 pybind11_add_module(rawdb_ext MODULE python/rawdb_python.cpp)
