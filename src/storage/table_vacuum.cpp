@@ -20,11 +20,13 @@ auto Table::vacuum(TimestampAllocator &timestamps) -> StatusOr<size_t>
 {
     std::vector<RowId> alive;
     size_t new_rc = 0;
+    
+    flush_pending();
+    
     {
         std::unique_lock lock(*rw_mtx);
-        write_pending_to_page();
 
-        size_t old_rc = row_count_;
+        size_t old_rc = row_count_.load();
         if (old_rc == 0)
             return size_t{0};
 
@@ -41,7 +43,7 @@ auto Table::vacuum(TimestampAllocator &timestamps) -> StatusOr<size_t>
 
         new_rc = alive.size();
         if (new_rc == 0) {
-            row_count_ = 0;
+            row_count_.store(0);
             pages_.clear();
             version_index_ = VersionIndex{};
             file_.resize(0);
@@ -81,24 +83,23 @@ auto Table::vacuum(TimestampAllocator &timestamps) -> StatusOr<size_t>
 
     {
         std::unique_lock lock(*rw_mtx);
-        row_count_ = 0;
+        row_count_.store(0);
         pages_.clear();
         version_index_ = VersionIndex{};
         file_.resize(0);
 
-        pending_.col_data.resize(schema_.column_count());
-        pending_.row_ts.clear();
-        pending_.row_count = 0;
+        auto batch_ptr = std::make_unique<PendingBatch>();
+        batch_ptr->col_data.resize(schema_.column_count());
 
         size_t written = 0;
         while (written < new_rc) {
             size_t batch = std::min(kBatchSize, new_rc - written);
             Timestamp batch_ts = timestamps.allocate_ts();
 
-            pending_.start_rid = written;
-            pending_.row_count = 0;
-            pending_.row_ts.assign(batch, batch_ts);
-            for (auto &cd : pending_.col_data)
+            batch_ptr->start_rid = written;
+            batch_ptr->row_count = 0;
+            batch_ptr->row_ts.assign(batch, batch_ts);
+            for (auto &cd : batch_ptr->col_data)
                 cd.clear();
 
             for (size_t ci = 0; ci < schema_.column_count(); ++ci) {
@@ -116,7 +117,7 @@ auto Table::vacuum(TimestampAllocator &timestamps) -> StatusOr<size_t>
                         std::memcpy(&len, pending_data[ci].data() + byte_end, sizeof(uint32_t));
                         byte_end += sizeof(uint32_t) + len;
                     }
-                    pending_.col_data[ci].assign(
+                    batch_ptr->col_data[ci].assign(
                         pending_data[ci].begin() + static_cast<ptrdiff_t>(byte_start),
                         pending_data[ci].begin() + static_cast<ptrdiff_t>(byte_end));
                 }
@@ -141,14 +142,18 @@ auto Table::vacuum(TimestampAllocator &timestamps) -> StatusOr<size_t>
                     }
                     auto start_it = pending_data[ci].begin() + static_cast<ptrdiff_t>(written * es);
                     auto end_it = start_it + static_cast<ptrdiff_t>(batch * es);
-                    pending_.col_data[ci].assign(start_it, end_it);
+                    batch_ptr->col_data[ci].assign(start_it, end_it);
                 }
             }
 
-            pending_.row_count = batch;
-            write_pending_to_page();
+            batch_ptr->row_count = batch;
+            // Temporarily unlock because write_batch_to_page takes unique_lock internally
+            // Wait, write_batch_to_page expects NO lock is held!
+            lock.unlock();
+            write_batch_to_page(batch_ptr.get());
+            lock.lock();
             written += batch;
-            row_count_ = written;
+            row_count_.store(written);
         }
     }
 

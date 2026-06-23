@@ -25,39 +25,30 @@ auto Executor::execute_insert(const InsertStmt &stmt) -> StatusOr<QueryResult>
     RowId start_rid = tbl.row_count();
     bool has_indexes = tbl.has_indexes();
 
-    struct RowBufs
-    {
-        std::vector<std::vector<std::byte>> cols;
-    };
-    std::vector<RowBufs> saved;
+    std::vector<std::vector<ColumnData>> batch_cols(stmt.rows.size(), std::vector<ColumnData>(schema.column_count()));
+    std::vector<std::byte> arena;
+    // Guess 16 bytes per column per row
+    arena.reserve(stmt.rows.size() * schema.column_count() * 16);
 
-    std::vector<ColumnData> cols(schema.column_count());
-    std::vector<std::vector<std::byte>> bufs(schema.column_count());
-    std::vector<std::vector<uint8_t>> nulls(schema.column_count());
-
-    for (const auto &row : stmt.rows) {
+    for (size_t ri = 0; ri < stmt.rows.size(); ++ri) {
+        const auto &row = stmt.rows[ri];
         if (row.size() != schema.column_count()) {
             return std::unexpected(Status::kInvalidArgument);
         }
 
-        if (has_indexes) {
-            bufs = std::vector<std::vector<std::byte>>(schema.column_count());
-        }
-
-        for (size_t ci = 0; ci < row.size(); ++ci) {
+        for (size_t ci = 0; ci < schema.column_count(); ++ci) {
             auto col_type = schema.columns[ci];
             const auto &val = row[ci];
 
-            bufs[ci].clear();
-
+            size_t start_off = arena.size();
             switch (col_type) {
                 case ColumnType::kInt32: {
                     int32_t v = 0;
                     if (std::holds_alternative<int64_t>(val.data)) {
                         v = static_cast<int32_t>(std::get<int64_t>(val.data));
                     }
-                    bufs[ci].resize(sizeof(v));
-                    std::memcpy(bufs[ci].data(), &v, sizeof(v));
+                    auto* p = reinterpret_cast<std::byte*>(&v);
+                    arena.insert(arena.end(), p, p + sizeof(v));
                     break;
                 }
                 case ColumnType::kTimestamp:
@@ -66,8 +57,8 @@ auto Executor::execute_insert(const InsertStmt &stmt) -> StatusOr<QueryResult>
                     if (std::holds_alternative<int64_t>(val.data)) {
                         v = std::get<int64_t>(val.data);
                     }
-                    bufs[ci].resize(sizeof(v));
-                    std::memcpy(bufs[ci].data(), &v, sizeof(v));
+                    auto* p = reinterpret_cast<std::byte*>(&v);
+                    arena.insert(arena.end(), p, p + sizeof(v));
                     break;
                 }
                 case ColumnType::kFloat64: {
@@ -78,23 +69,25 @@ auto Executor::execute_insert(const InsertStmt &stmt) -> StatusOr<QueryResult>
                     else if (std::holds_alternative<int64_t>(val.data)) {
                         v = static_cast<double>(std::get<int64_t>(val.data));
                     }
-                    bufs[ci].resize(sizeof(v));
-                    std::memcpy(bufs[ci].data(), &v, sizeof(v));
+                    auto* p = reinterpret_cast<std::byte*>(&v);
+                    arena.insert(arena.end(), p, p + sizeof(v));
                     break;
                 }
                 case ColumnType::kVarChar: {
                     std::string_view s;
+                    std::string tmp;
                     if (std::holds_alternative<std::string>(val.data)) {
                         s = std::get<std::string>(val.data);
                     }
                     else if (std::holds_alternative<int64_t>(val.data)) {
-                        auto tmp = std::to_string(std::get<int64_t>(val.data));
+                        tmp = std::to_string(std::get<int64_t>(val.data));
                         s = tmp;
                     }
                     uint32_t end = static_cast<uint32_t>(s.size());
-                    bufs[ci].resize(sizeof(uint32_t) + s.size());
-                    std::memcpy(bufs[ci].data(), &end, sizeof(uint32_t));
-                    std::memcpy(bufs[ci].data() + sizeof(uint32_t), s.data(), s.size());
+                    auto* p_end = reinterpret_cast<std::byte*>(&end);
+                    arena.insert(arena.end(), p_end, p_end + sizeof(uint32_t));
+                    auto* p_str = reinterpret_cast<const std::byte*>(s.data());
+                    arena.insert(arena.end(), p_str, p_str + s.size());
                     break;
                 }
                 case ColumnType::kBool: {
@@ -102,50 +95,57 @@ auto Executor::execute_insert(const InsertStmt &stmt) -> StatusOr<QueryResult>
                     if (std::holds_alternative<int64_t>(val.data)) {
                         v = std::get<int64_t>(val.data) != 0;
                     }
-                    bufs[ci].resize(sizeof(v));
-                    std::memcpy(bufs[ci].data(), &v, sizeof(v));
+                    auto* p = reinterpret_cast<std::byte*>(&v);
+                    arena.insert(arena.end(), p, p + sizeof(v));
                     break;
                 }
             }
-        }
-
-        for (size_t ci = 0; ci < schema.column_count(); ++ci) {
-            cols[ci].type = schema.columns[ci];
-            cols[ci].data = bufs[ci].data();
-            cols[ci].size = bufs[ci].size();
-            cols[ci].nulls = nulls[ci].empty() ? nullptr : nulls[ci].data();
-        }
-
-        auto st = conn_.db().insert(tid, cols, conn_.txn());
-        if (!st) {
-            return std::unexpected(st.error());
-        }
-
-        if (has_indexes) {
-            saved.push_back({std::move(bufs)});
+            batch_cols[ri][ci].type = col_type;
+            batch_cols[ri][ci].size = arena.size() - start_off;
+            // Note: pointer into arena is dangerous if arena reallocates!
+            // We reserved enough, but if it reallocates, pointers break.
+            // Actually, we must resolve pointers AFTER the loop!
+            batch_cols[ri][ci].data = reinterpret_cast<const std::byte*>(start_off);
+            batch_cols[ri][ci].nulls = nullptr;
         }
     }
 
-    if (has_indexes && !saved.empty()) {
+    // Fixup pointers now that arena is fully populated
+    for (size_t ri = 0; ri < stmt.rows.size(); ++ri) {
+        for (size_t ci = 0; ci < schema.column_count(); ++ci) {
+            size_t off = reinterpret_cast<size_t>(batch_cols[ri][ci].data);
+            batch_cols[ri][ci].data = arena.data() + off;
+        }
+    }
+
+    auto st = conn_.db().insert_batch(tid, batch_cols, conn_.txn());
+    if (!st) {
+        return std::unexpected(st.error());
+    }
+
+    if (has_indexes) {
         auto &table_ref = conn_.db().table(tid);
-        for (size_t i = 0; i < saved.size(); ++i) {
+        for (size_t i = 0; i < stmt.rows.size(); ++i) {
             RowId rid = start_rid + static_cast<RowId>(i);
             Status idx_err = Status::kOk;
             table_ref.for_each_index([&](auto &idx) {
                 if (idx_err != Status::kOk)
                     return;
-                const auto &col_buf = saved[i].cols[idx.column_idx];
+                
                 auto col_type = schema.columns[idx.column_idx];
                 const std::byte *key;
                 size_t key_len;
+                
+                const auto& col_data = batch_cols[i][idx.column_idx];
+                
                 if (col_type == ColumnType::kVarChar) {
-                    auto total = col_buf.size();
+                    auto total = col_data.size;
                     key_len = (total > sizeof(uint32_t)) ? total - sizeof(uint32_t) : 0;
-                    key = col_buf.data() + sizeof(uint32_t);
+                    key = static_cast<const std::byte*>(col_data.data) + sizeof(uint32_t);
                 }
                 else {
-                    key = col_buf.data();
-                    key_len = col_buf.size();
+                    key = static_cast<const std::byte*>(col_data.data);
+                    key_len = col_data.size;
                 }
                 idx_err = idx.tree.insert(key, key_len, rid);
             });
@@ -184,7 +184,7 @@ auto Executor::execute_delete(const DeleteStmt &stmt) -> StatusOr<QueryResult>
     auto scan = read_table_columns(tbl);
     if (!scan)
         return std::unexpected(scan.error());
-    size_t row_count = tbl.row_count();
+    size_t row_count = scan->row_count;
 
     std::vector<RowId> target_rows;
     Timestamp read_ts = conn_.txn() ? conn_.txn()->read_ts : conn_.db().next_ts();
@@ -291,7 +291,7 @@ auto Executor::execute_update(const UpdateStmt &stmt) -> StatusOr<QueryResult>
     auto scan = read_table_columns(tbl);
     if (!scan)
         return std::unexpected(scan.error());
-    size_t row_count = tbl.row_count();
+    size_t row_count = scan->row_count;
 
     std::vector<RowId> target_rows;
     Timestamp read_ts = conn_.txn() ? conn_.txn()->read_ts : conn_.db().next_ts();

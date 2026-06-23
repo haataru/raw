@@ -48,14 +48,14 @@ static auto run_sql_benchmarks(bool /*quick*/) -> void
         }
     }
 
-    constexpr size_t kRowCount = 100000;
+    constexpr size_t kRowCount = 1000000;
     constexpr int kScanIters = 10;
     constexpr size_t kLookupQueries = 1000;
 
     // ── INSERT ──
     {
         auto start = clock::now();
-        constexpr size_t kBatchSize = 1000;
+        constexpr size_t kBatchSize = 10000;
         for (size_t i = 0; i < kRowCount; i += kBatchSize) {
             exec.execute("BEGIN");
             std::string sql = "INSERT INTO t VALUES ";

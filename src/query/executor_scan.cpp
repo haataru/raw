@@ -77,6 +77,8 @@ auto Executor::read_table_columns(Table &table) -> StatusOr<TableScanResult>
         return empty;
     }
 
+    auto lock = table.lock_shared();
+
     TableScanResult scan;
     scan.col_data.resize(schema.column_count());
     scan.col_nulls.resize(schema.column_count());
@@ -167,6 +169,7 @@ auto Executor::read_table_columns(Table &table) -> StatusOr<TableScanResult>
         scan.columns[ci].nulls = scan.col_nulls[ci].empty() ? nullptr : scan.col_nulls[ci].data();
     }
 
+    scan.row_count = rows_seen;
     return scan;
 }
 

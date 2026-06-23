@@ -27,6 +27,7 @@ struct TableScanResult
     std::vector<std::vector<std::byte>> col_data;
     std::vector<std::vector<uint8_t>> col_nulls;
     std::vector<ColumnData> columns;
+    size_t row_count = 0;
 };
 
 class Filter

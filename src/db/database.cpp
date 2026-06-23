@@ -179,6 +179,12 @@ auto Database::open(const std::filesystem::path &path) -> Status
     }
 
     flush_handler_ = std::make_unique<FlushHandler>(tables_, tables_mtx_);
+    {
+        std::unique_lock lock(tables_mtx_);
+        for (auto &tbl : tables_) {
+            tbl.set_flush_handler(flush_handler_.get());
+        }
+    }
     txn_manager_ = std::make_unique<TransactionManager>(timestamps_);
     gc_ = std::make_unique<GarbageCollector>(tables_, tables_mtx_, timestamps_, watermarks_);
     gc_->start();
@@ -284,6 +290,9 @@ auto Database::create_table(const std::string &name, Schema schema) -> StatusOr<
     TableId id = static_cast<TableId>(tables_.size());
     tables_.emplace_back(name, std::move(schema));
     auto &tbl = tables_.back();
+    if (flush_handler_) {
+        tbl.set_flush_handler(flush_handler_.get());
+    }
     auto st = tbl.open_file(path_);
     if (st != Status::kOk) {
         tables_.pop_back();
@@ -318,6 +327,27 @@ auto Database::insert(TableId table_id, const std::vector<ColumnData> &columns, 
         }
     } else {
         res = tables_[table_id].insert_row(timestamps_, columns);
+    }
+    return res;
+}
+
+auto Database::insert_batch(TableId table_id, const std::vector<std::vector<ColumnData>> &rows, const std::shared_ptr<Transaction>& txn) -> StatusOr<std::vector<RowId>>
+{
+    if (table_id >= tables_.size()) {
+        return std::unexpected(Status::kInvalidArgument);
+    }
+
+    Lsn lsn = wal_writer_.append_insert_batch(txn ? txn->tx_id : kInvalidTxId, table_id, rows);
+    tables_[table_id].set_lsn(lsn);
+
+    StatusOr<std::vector<RowId>> res;
+    if (txn) {
+        res = tables_[table_id].insert_rows(txn->tx_id | kTxIdFlag, rows);
+        if (res) {
+            txn->write_set[table_id].insert(txn->write_set[table_id].end(), res->begin(), res->end());
+        }
+    } else {
+        res = tables_[table_id].insert_rows(timestamps_, rows);
     }
     return res;
 }

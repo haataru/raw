@@ -36,6 +36,7 @@ public:
     auto create_table(const std::string &name, Schema schema) -> StatusOr<TableId>;
 
     auto insert(TableId table_id, const std::vector<ColumnData> &columns, const std::shared_ptr<Transaction>& txn = nullptr) -> StatusOr<RowId>;
+    auto insert_batch(TableId table_id, const std::vector<std::vector<ColumnData>> &rows, const std::shared_ptr<Transaction>& txn = nullptr) -> StatusOr<std::vector<RowId>>;
 
     auto delete_rows(TableId table_id, std::vector<RowId> row_ids, const std::shared_ptr<Transaction>& txn = nullptr) -> Status;
 

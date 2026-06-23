@@ -19,7 +19,8 @@ enum class WalRecordType : uint8_t {
     kCommit = 2,
     kRollback = 3,
     kInsert = 4,
-    kDelete = 5
+    kDelete = 5,
+    kInsertBatch = 6
 };
 
 struct WalRecordHeader {
@@ -48,6 +49,7 @@ public:
     
     // For simplicity, we just pass raw serialized rows, or we serialize inside.
     auto append_insert(TxId tx_id, TableId table_id, const std::vector<ColumnData>& columns) -> Lsn;
+    auto append_insert_batch(TxId tx_id, TableId table_id, const std::vector<std::vector<ColumnData>>& rows) -> Lsn;
     auto append_delete(TxId tx_id, TableId table_id, const std::vector<RowId>& row_ids) -> Lsn;
 
     auto flush() -> Status;

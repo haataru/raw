@@ -85,7 +85,8 @@ auto Executor::execute_select(const SelectStmt &stmt) -> StatusOr<QueryResult>
 
     tbl.flush_pending();
     Timestamp read_ts = conn_.txn() ? conn_.txn()->read_ts : conn_.db().next_ts();
-    size_t row_count = tbl.row_count();
+    // row_count will be determined after reading columns
+    // size_t row_count = tbl.row_count();
 
     QueryResult result;
     if (stmt.columns.empty()) {
@@ -179,7 +180,8 @@ auto Executor::execute_select(const SelectStmt &stmt) -> StatusOr<QueryResult>
         if (index_rids.has_value()) {
             index_used = true;
             for (auto rid : *index_rids) {
-                if (static_cast<size_t>(rid) >= row_count)
+                // we need to use tbl.row_count() for index lookup validation
+                if (static_cast<size_t>(rid) >= tbl.row_count())
                     continue;
                 auto r = tbl.search_version_index(rid, read_ts);
                 if (r && *r != Table::kNotFoundPage) {
@@ -194,6 +196,7 @@ auto Executor::execute_select(const SelectStmt &stmt) -> StatusOr<QueryResult>
         if (!scan_r)
             return std::unexpected(scan_r.error());
         full_scan = std::move(*scan_r);
+        size_t row_count = full_scan.row_count;
 
         std::vector<size_t> matching;
         if (stmt.has_where) {

@@ -168,6 +168,38 @@ auto WalWriter::append_insert(TxId tx_id, TableId table_id, const std::vector<Co
     return append_record(tx_id, WalRecordType::kInsert, payload);
 }
 
+auto WalWriter::append_insert_batch(TxId tx_id, TableId table_id, const std::vector<std::vector<ColumnData>>& rows) -> Lsn
+{
+    if (rows.empty()) {
+        std::lock_guard lock(mtx_);
+        return next_lsn_ - 1;
+    }
+
+    std::vector<std::byte> payload;
+    auto put = [&](const void* d, size_t n) {
+        auto* p = static_cast<const std::byte*>(d);
+        payload.insert(payload.end(), p, p + n);
+    };
+    
+    put(&table_id, sizeof(table_id));
+    uint32_t row_count = static_cast<uint32_t>(rows.size());
+    put(&row_count, sizeof(row_count));
+    uint32_t col_count = static_cast<uint32_t>(rows[0].size());
+    put(&col_count, sizeof(col_count));
+    
+    for (const auto& row : rows) {
+        for (const auto& col : row) {
+            uint8_t t = static_cast<uint8_t>(col.type);
+            put(&t, sizeof(t));
+            uint32_t s = static_cast<uint32_t>(col.size);
+            put(&s, sizeof(s));
+            put(col.data, col.size);
+        }
+    }
+    
+    return append_record(tx_id, WalRecordType::kInsertBatch, payload);
+}
+
 auto WalWriter::append_delete(TxId tx_id, TableId table_id, const std::vector<RowId>& row_ids) -> Lsn
 {
     std::vector<std::byte> payload;

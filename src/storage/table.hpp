@@ -8,6 +8,7 @@
 #include <shared_mutex>
 #include <string>
 #include <vector>
+#include <queue>
 
 #include "core/error.hpp"
 #include "core/types.hpp"
@@ -18,6 +19,8 @@
 
 namespace rawdb
 {
+
+class FlushHandler;
 
 struct Schema
 {
@@ -49,6 +52,9 @@ public:
 
     auto insert_row(TimestampAllocator &timestamps,
                     const std::vector<ColumnData> &columns) -> StatusOr<RowId>;
+
+    auto insert_rows(Timestamp ts, const std::vector<std::vector<ColumnData>> &rows) -> StatusOr<std::vector<RowId>>;
+    auto insert_rows(TimestampAllocator &timestamps, const std::vector<std::vector<ColumnData>> &rows) -> StatusOr<std::vector<RowId>>;
 
     void flush_pending();
 
@@ -130,7 +136,7 @@ public:
 private:
     std::string name_;
     Schema schema_;
-    size_t row_count_{0};
+    std::atomic<size_t> row_count_{0};
     MmapFile file_;
     bool file_open_{false};
     VersionIndex version_index_;
@@ -146,17 +152,41 @@ private:
     std::vector<IndexInfo> indexes_;
 
     // ── Pending batch buffer ──
-    struct PendingBatch
+    struct alignas(64) PendingBatch
     {
+        std::mutex mtx;
         std::vector<std::vector<std::byte>> col_data;
         std::vector<Timestamp> row_ts;
         size_t row_count = 0;
         RowId start_rid = 0;
+
+        PendingBatch() = default;
+        PendingBatch(const PendingBatch&) = delete;
+        auto operator=(const PendingBatch&) -> PendingBatch& = delete;
     };
-    PendingBatch pending_;
+
+    std::atomic<PendingBatch*> active_batch_{nullptr};
+    std::vector<std::unique_ptr<PendingBatch>> free_batches_;
+    std::queue<std::unique_ptr<PendingBatch>> flush_queue_;
+    std::mutex pool_mtx_;
+    std::condition_variable pool_cv_;
+
+    static constexpr size_t kMaxBatches = 64;
+
+    void init_batches();
+    auto get_free_batch() -> std::unique_ptr<PendingBatch>;
+    void push_flush_queue(std::unique_ptr<PendingBatch> batch);
 
     // Internal: write pending_ rows to a file page (caller holds unique_lock).
-    void write_pending_to_page();
+    void write_batch_to_page(PendingBatch* batch);
+
+public:
+    auto pop_flush_queue() -> std::unique_ptr<PendingBatch>;
+    void return_free_batch(std::unique_ptr<PendingBatch> batch);
+
+    void set_flush_handler(FlushHandler* handler) { flush_handler_ = handler; }
+private:
+    FlushHandler* flush_handler_ = nullptr;
 };
 
 } // namespace rawdb
