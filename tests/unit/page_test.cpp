@@ -6,7 +6,7 @@
 
 using namespace rawdb;
 
-TEST(PageTest, HeaderSize) { EXPECT_EQ(sizeof(PageHeader), 20); }
+TEST(PageTest, HeaderSize) { EXPECT_EQ(sizeof(PageHeader), 32); }
 
 TEST(PageTest, CreateHeader)
 {

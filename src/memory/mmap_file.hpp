@@ -40,7 +40,7 @@ public:
 
     [[nodiscard]] auto is_open() const -> bool { return fd_ != -1; }
 
-    void resize(size_t new_size);
+    auto resize(size_t new_size) -> Status;
 
     auto msync_async() -> Status;
 

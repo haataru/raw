@@ -26,3 +26,8 @@ Thumbs.db
 # CLI Data
 rawdb_data/
 rawdb_memory_fallback/
+
+# Docker
+Dockerfile
+docker-compose.yml
+.docker/

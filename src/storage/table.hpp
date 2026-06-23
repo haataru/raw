@@ -56,7 +56,7 @@ public:
     auto insert_rows(Timestamp ts, const std::vector<std::vector<ColumnData>> &rows) -> StatusOr<std::vector<RowId>>;
     auto insert_rows(TimestampAllocator &timestamps, const std::vector<std::vector<ColumnData>> &rows) -> StatusOr<std::vector<RowId>>;
 
-    void flush_pending();
+    auto flush_pending() -> Status;
 
     // ── Page read ──
 
@@ -177,8 +177,7 @@ private:
     auto get_free_batch() -> std::unique_ptr<PendingBatch>;
     void push_flush_queue(std::unique_ptr<PendingBatch> batch);
 
-    // Internal: write pending_ rows to a file page (caller holds unique_lock).
-    void write_batch_to_page(PendingBatch* batch);
+    auto write_batch_to_page(PendingBatch* batch) -> Status;
 
 public:
     auto pop_flush_queue() -> std::unique_ptr<PendingBatch>;

@@ -10,7 +10,9 @@ auto TransactionManager::begin(Database& db) -> std::shared_ptr<Transaction>
     auto txn = std::make_shared<Transaction>();
     txn->tx_id = next_tx_id_.fetch_add(1, std::memory_order_relaxed);
     txn->read_ts = ts_alloc_.current();
-    txn->start_lsn = db.wal().append_begin(txn->tx_id);
+    auto lsn_res = db.wal().append_begin(txn->tx_id);
+    if (!lsn_res) return nullptr;
+    txn->start_lsn = *lsn_res;
     
     std::lock_guard lock(mtx_);
     active_txns_.insert({txn->tx_id, txn});
@@ -25,7 +27,9 @@ auto TransactionManager::commit(std::shared_ptr<Transaction> txn, Database& db) 
 
     Timestamp commit_ts = ts_alloc_.allocate_ts();
     
-    db.wal().append_commit(txn->tx_id);
+    if (auto s = db.wal().append_commit(txn->tx_id); !s) {
+        return s.error();
+    }
     db.wal().flush(); // Synchronous commit
     
     for (const auto& [table_id, rows] : txn->write_set) {
@@ -54,7 +58,9 @@ auto TransactionManager::rollback(std::shared_ptr<Transaction> txn, Database& db
     // Yes! Infinite future.
     Timestamp aborted_ts = static_cast<Timestamp>(-1);
     
-    db.wal().append_rollback(txn->tx_id);
+    if (auto s = db.wal().append_rollback(txn->tx_id); !s) {
+        return s.error();
+    }
     // Rollback doesn't strictly need synchronous flush because if we crash, it aborts anyway.
     
     for (const auto& [table_id, rows] : txn->write_set) {

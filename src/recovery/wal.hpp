@@ -43,19 +43,19 @@ public:
     void remove_segments_before(Lsn safe_lsn);
     auto current_lsn() const -> Lsn;
 
-    auto append_begin(TxId tx_id) -> Lsn;
-    auto append_commit(TxId tx_id) -> Lsn;
-    auto append_rollback(TxId tx_id) -> Lsn;
+    auto append_begin(TxId tx_id) -> StatusOr<Lsn>;
+    auto append_commit(TxId tx_id) -> StatusOr<Lsn>;
+    auto append_rollback(TxId tx_id) -> StatusOr<Lsn>;
     
     // For simplicity, we just pass raw serialized rows, or we serialize inside.
-    auto append_insert(TxId tx_id, TableId table_id, const std::vector<ColumnData>& columns) -> Lsn;
-    auto append_insert_batch(TxId tx_id, TableId table_id, const std::vector<std::vector<ColumnData>>& rows) -> Lsn;
-    auto append_delete(TxId tx_id, TableId table_id, const std::vector<RowId>& row_ids) -> Lsn;
+    auto append_insert(TxId tx_id, TableId table_id, const std::vector<ColumnData>& columns) -> StatusOr<Lsn>;
+    auto append_insert_batch(TxId tx_id, TableId table_id, const std::vector<std::vector<ColumnData>>& rows) -> StatusOr<Lsn>;
+    auto append_delete(TxId tx_id, TableId table_id, const std::vector<RowId>& row_ids) -> StatusOr<Lsn>;
 
     auto flush() -> Status;
 
 private:
-    auto append_record(TxId tx_id, WalRecordType type, const std::vector<std::byte>& payload) -> Lsn;
+    auto append_record(TxId tx_id, WalRecordType type, const std::vector<std::byte>& payload) -> StatusOr<Lsn>;
     void rotate_if_needed();
 
     std::filesystem::path wal_dir_;

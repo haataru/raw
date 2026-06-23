@@ -388,7 +388,7 @@ auto Table::insert_rows(TimestampAllocator &timestamps, const std::vector<std::v
     return results;
 }
 
-void Table::flush_pending()
+auto Table::flush_pending() -> Status
 {
     PendingBatch* active;
     std::unique_ptr<PendingBatch> to_flush;
@@ -411,16 +411,21 @@ void Table::flush_pending()
     }
 
     while (auto batch = pop_flush_queue()) {
-        write_batch_to_page(batch.get());
+        if (auto s = write_batch_to_page(batch.get()); s.code != Status::kOk) {
+            push_flush_queue(std::move(batch));
+            return s;
+        }
         return_free_batch(std::move(batch));
     }
+    
+    return Status::kOk;
 }
 
-void Table::write_batch_to_page(PendingBatch* batch)
+auto Table::write_batch_to_page(PendingBatch* batch) -> Status
 {
     size_t row_count = batch->row_count;
     if (row_count == 0)
-        return;
+        return Status::kOk;
 
     size_t col_count = schema_.column_count();
     size_t hdr_size = sizeof(BatchHeader) + col_count * sizeof(ColMeta);
@@ -443,18 +448,23 @@ void Table::write_batch_to_page(PendingBatch* batch)
         else {
             col_page_sizes[ci] = batch->col_data[ci].size();
         }
-        total_data_size += col_page_sizes[ci];
+        size_t padded_data = (col_page_sizes[ci] + 7) & ~7ULL;
+        total_data_size += padded_data;
     }
 
     size_t bm_bytes = (row_count + 7) / 8;
-    size_t total_bm_size = col_count * bm_bytes;
+    size_t padded_bm = (bm_bytes + 7) & ~7ULL;
+    size_t total_bm_size = col_count * padded_bm;
     size_t payload_size = hdr_size + total_data_size + total_bm_size;
+    payload_size = (payload_size + 7) & ~7ULL;
 
     std::unique_lock lock(*rw_mtx);
 
     PageId page_id = file_.size();
     size_t total_size = PageHeader::kSize + payload_size;
-    file_.resize(page_id + total_size);
+    if (auto s = file_.resize(page_id + total_size); s.code != Status::kOk) {
+        return s;
+    }
 
     auto *base = file_.data() + page_id;
     auto &hdr = *reinterpret_cast<PageHeader *>(base);
@@ -497,15 +507,15 @@ void Table::write_batch_to_page(PendingBatch* batch)
                 blob_pos += len;
             }
             std::memcpy(payload + off, cum_offsets.data(), row_count * sizeof(uint32_t));
-            off = blob_pos;
+            off += (col_page_sizes[ci] + 7) & ~7ULL;
         }
         else {
             std::memcpy(payload + off, batch->col_data[ci].data(), col_page_sizes[ci]);
-            off += col_page_sizes[ci];
+            off += (col_page_sizes[ci] + 7) & ~7ULL;
         }
 
         std::memset(payload + null_off, 0, bm_bytes);
-        null_off += bm_bytes;
+        null_off += (bm_bytes + 7) & ~7ULL;
     }
 
     set_page_checksum(hdr, payload, payload_size);
@@ -523,6 +533,7 @@ void Table::write_batch_to_page(PendingBatch* batch)
 
     // msync_sync_safe is intentionally omitted here to prevent blocking. 
     // It is called in Table::sync() with a shared_lock.
+    return Status::kOk;
 }
 
 auto Table::open_file(const std::filesystem::path &db_path) -> Status

@@ -109,24 +109,36 @@ void MmapFile::close()
     size_ = 0;
 }
 
-void MmapFile::resize(size_t new_size)
+auto MmapFile::resize(size_t new_size) -> Status
 {
     if (new_size == size_) {
-        return;
+        return Status::kOk;
     }
 
     do_munmap();
 
     if (::ftruncate(fd_, static_cast<off_t>(new_size)) == -1) {
-        throw std::runtime_error("Failed to resize file: " + path_.string() + ": " +
-                                 std::strerror(errno));
+        int err = errno;
+        // Restore previous mmap
+        if (size_ > 0) {
+            data_ = static_cast<std::byte *>(
+                ::mmap(nullptr, size_, PROT_READ | PROT_WRITE, MAP_SHARED, fd_, 0));
+            if (data_ == MAP_FAILED) {
+                data_ = nullptr;
+                return {Status::kFatal, "failed to restore mmap after ftruncate error: " + std::string(std::strerror(errno))};
+            }
+        }
+        if (err == ENOSPC) {
+            return {Status::kNoSpace, "failed to resize file: no space left on device"};
+        }
+        return {Status::kIoError, "failed to resize file: " + std::string(std::strerror(err))};
     }
 
     // Handle zero-size after resize
     if (new_size == 0) {
         data_ = nullptr;
         size_ = 0;
-        return;
+        return Status::kOk;
     }
 
     data_ = static_cast<std::byte *>(
@@ -134,11 +146,11 @@ void MmapFile::resize(size_t new_size)
 
     if (data_ == MAP_FAILED) {
         data_ = nullptr;
-        throw std::runtime_error("Failed to remap file: " + path_.string() + ": " +
-                                 std::strerror(errno));
+        return {Status::kIoError, "failed to remap file: " + std::string(std::strerror(errno))};
     }
 
     size_ = new_size;
+    return Status::kOk;
 }
 
 auto MmapFile::msync_async() -> Status

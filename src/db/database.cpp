@@ -316,8 +316,9 @@ auto Database::insert(TableId table_id, const std::vector<ColumnData> &columns, 
         return std::unexpected(Status::kInvalidArgument);
     }
 
-    Lsn lsn = wal_writer_.append_insert(txn ? txn->tx_id : kInvalidTxId, table_id, columns);
-    tables_[table_id].set_lsn(lsn);
+    auto lsn_res = wal_writer_.append_insert(txn ? txn->tx_id : kInvalidTxId, table_id, columns);
+    if (!lsn_res) return std::unexpected(lsn_res.error());
+    tables_[table_id].set_lsn(*lsn_res);
 
     StatusOr<RowId> res;
     if (txn) {
@@ -337,8 +338,9 @@ auto Database::insert_batch(TableId table_id, const std::vector<std::vector<Colu
         return std::unexpected(Status::kInvalidArgument);
     }
 
-    Lsn lsn = wal_writer_.append_insert_batch(txn ? txn->tx_id : kInvalidTxId, table_id, rows);
-    tables_[table_id].set_lsn(lsn);
+    auto lsn_res = wal_writer_.append_insert_batch(txn ? txn->tx_id : kInvalidTxId, table_id, rows);
+    if (!lsn_res) return std::unexpected(lsn_res.error());
+    tables_[table_id].set_lsn(*lsn_res);
 
     StatusOr<std::vector<RowId>> res;
     if (txn) {
@@ -455,8 +457,9 @@ auto Database::delete_rows(TableId table_id, std::vector<RowId> row_ids, const s
         return Status::kInvalidArgument;
     }
 
-    Lsn lsn = wal_writer_.append_delete(txn ? txn->tx_id : kInvalidTxId, table_id, row_ids);
-    tables_[table_id].set_lsn(lsn);
+    auto lsn_res = wal_writer_.append_delete(txn ? txn->tx_id : kInvalidTxId, table_id, row_ids);
+    if (!lsn_res) return lsn_res.error();
+    tables_[table_id].set_lsn(*lsn_res);
 
     Timestamp ts = txn ? (txn->tx_id | kTxIdFlag) : timestamps_.allocate_ts();
 
@@ -484,7 +487,7 @@ auto Database::checkpoint() -> Status
     {
         std::shared_lock lock(tables_mtx_);
         for (auto &tbl : tables_) {
-            tbl.flush_pending();
+            if (auto s = tbl.flush_pending(); s.code != Status::kOk) return s;
             tbl.sync();
             tbl.save_vindex(path_);
         }

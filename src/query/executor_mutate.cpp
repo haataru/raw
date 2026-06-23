@@ -179,7 +179,9 @@ auto Executor::execute_delete(const DeleteStmt &stmt) -> StatusOr<QueryResult>
     auto &tbl = conn_.db().table(tid);
     const auto &schema = tbl.schema();
 
-    tbl.flush_pending();
+    if (auto s = tbl.flush_pending(); s.code != Status::kOk) {
+        return std::unexpected(s);
+    }
 
     auto scan = read_table_columns(tbl);
     if (!scan)
@@ -287,7 +289,9 @@ auto Executor::execute_update(const UpdateStmt &stmt) -> StatusOr<QueryResult>
         return std::unexpected(Status::kNotFound);
     }
 
-    tbl.flush_pending();
+    if (auto s = tbl.flush_pending(); s.code != Status::kOk) {
+        return std::unexpected(s);
+    }
     auto scan = read_table_columns(tbl);
     if (!scan)
         return std::unexpected(scan.error());

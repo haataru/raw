@@ -26,7 +26,7 @@ static auto ns_to_us(int64_t ns) -> double { return static_cast<double>(ns) / 1e
 
 // ── SQL benchmarks (single DB: INSERT → SELECT fullscan → INDEX + lookup) ──
 
-static auto run_sql_benchmarks(bool /*quick*/) -> void
+static auto run_sql_benchmarks(size_t kRowCount) -> void
 {
     auto path = fs::temp_directory_path() / "rawdb_bench_sql";
     fs::remove_all(path);
@@ -48,7 +48,7 @@ static auto run_sql_benchmarks(bool /*quick*/) -> void
         }
     }
 
-    constexpr size_t kRowCount = 1000000;
+    // size_t kRowCount is passed as argument
     constexpr int kScanIters = 10;
     constexpr size_t kLookupQueries = 1000;
 
@@ -330,7 +330,9 @@ auto main() -> int
 
     std::cout << "=== rawDB Benchmarks ===\n\n";
 
-    run_sql_benchmarks(false);
+    run_sql_benchmarks(1'000'000);
+    std::cout << "\n";
+    run_sql_benchmarks(10'000'000);
     std::cout << "\n";
     run_concurrent_mix();
     std::cout << "\n";

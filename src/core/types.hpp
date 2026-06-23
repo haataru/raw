@@ -54,6 +54,7 @@ struct Status
         kAlreadyExists = 7,
         kNotVisible = 8,
         kFatal = 9,
+        kNoSpace = 10,
     };
 
     Code code;

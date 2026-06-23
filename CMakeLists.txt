@@ -15,6 +15,7 @@ include(cmake/CompilerOptions.cmake)
 # Library: rawdb (static)
 # ──────────────────────────────────────────────
 option(RAWDB_ENABLE_AVX2 "Enable AVX2 globally (forces AVX2 everywhere, not recommended for portable builds)" OFF)
+option(RAWDB_ENABLE_FUZZING "Enable building fuzz harness for AFL++" OFF)
 
 if(RAWDB_ENABLE_AVX2 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     add_compile_options(-mavx2)
@@ -158,4 +159,19 @@ if(CLANG_FORMAT)
         COMMAND ${CLANG_FORMAT} --dry-run --Werror ${RAWDB_SOURCES_FOR_FORMAT}
         COMMENT "Checking clang-format compliance"
     )
+endif()
+
+# ──────────────────────────────────────────────
+# Fuzzing
+# ──────────────────────────────────────────────
+if(RAWDB_ENABLE_FUZZING)
+    add_executable(rawdb_fuzz_harness tests/fuzz/fuzz_harness.cpp)
+    target_link_libraries(rawdb_fuzz_harness PRIVATE rawdb)
+    target_include_directories(rawdb_fuzz_harness PRIVATE src)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        if(NOT CMAKE_CXX_COMPILER MATCHES "afl")
+            target_compile_options(rawdb_fuzz_harness PRIVATE -fsanitize=fuzzer)
+            target_link_options(rawdb_fuzz_harness PRIVATE -fsanitize=fuzzer)
+        endif()
+    endif()
 endif()

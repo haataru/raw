@@ -289,11 +289,8 @@ auto BTree::insert(const std::byte *key, size_t key_len, RowId row_id) -> Status
 
     PageId new_root_off = static_cast<PageId>(file_.size());
     size_t new_root_sz = node_size_;
-    try {
-        file_.resize(new_root_off + new_root_sz);
-    }
-    catch (...) {
-        return Status::kIoError;
+    if (auto s = file_.resize(new_root_off + new_root_sz); s.code != Status::kOk) {
+        return s;
     }
 
     auto *node = file_.data() + new_root_off;

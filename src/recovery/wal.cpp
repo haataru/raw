@@ -107,45 +107,54 @@ auto WalWriter::current_lsn() const -> Lsn
     return next_lsn_;
 }
 
-auto WalWriter::append_record(TxId tx_id, WalRecordType type, const std::vector<std::byte>& payload) -> Lsn
+auto WalWriter::append_record(TxId tx_id, WalRecordType type, const std::vector<std::byte>& payload) -> StatusOr<Lsn>
 {
     std::lock_guard lock(mtx_);
     rotate_if_needed();
     
     WalRecordHeader hdr;
     hdr.magic = 0x57414C52;
-    hdr.lsn = next_lsn_++;
+    hdr.lsn = next_lsn_;
     hdr.tx_id = tx_id;
     hdr.type = type;
     hdr.payload_size = static_cast<uint32_t>(payload.size());
     hdr.checksum = compute_page_checksum(payload.data(), payload.size());
     
+    auto old_pos = file_.tellp();
+
     file_.write(reinterpret_cast<const char*>(&hdr), sizeof(hdr));
-    current_segment_size_ += sizeof(hdr);
     if (!payload.empty()) {
         file_.write(reinterpret_cast<const char*>(payload.data()), static_cast<std::streamsize>(payload.size()));
-        current_segment_size_ += payload.size();
     }
+
+    if (file_.fail() || file_.bad()) {
+        file_.clear();
+        file_.seekp(old_pos); // Revert write
+        return std::unexpected(Status{Status::kNoSpace, "failed to append wal record: no space left on device"});
+    }
+    
+    next_lsn_++;
+    current_segment_size_ += sizeof(hdr) + payload.size();
     
     return hdr.lsn;
 }
 
-auto WalWriter::append_begin(TxId tx_id) -> Lsn
+auto WalWriter::append_begin(TxId tx_id) -> StatusOr<Lsn>
 {
     return append_record(tx_id, WalRecordType::kBegin, {});
 }
 
-auto WalWriter::append_commit(TxId tx_id) -> Lsn
+auto WalWriter::append_commit(TxId tx_id) -> StatusOr<Lsn>
 {
     return append_record(tx_id, WalRecordType::kCommit, {});
 }
 
-auto WalWriter::append_rollback(TxId tx_id) -> Lsn
+auto WalWriter::append_rollback(TxId tx_id) -> StatusOr<Lsn>
 {
     return append_record(tx_id, WalRecordType::kRollback, {});
 }
 
-auto WalWriter::append_insert(TxId tx_id, TableId table_id, const std::vector<ColumnData>& columns) -> Lsn
+auto WalWriter::append_insert(TxId tx_id, TableId table_id, const std::vector<ColumnData>& columns) -> StatusOr<Lsn>
 {
     std::vector<std::byte> payload;
     auto put = [&](const void* d, size_t n) {
@@ -168,7 +177,7 @@ auto WalWriter::append_insert(TxId tx_id, TableId table_id, const std::vector<Co
     return append_record(tx_id, WalRecordType::kInsert, payload);
 }
 
-auto WalWriter::append_insert_batch(TxId tx_id, TableId table_id, const std::vector<std::vector<ColumnData>>& rows) -> Lsn
+auto WalWriter::append_insert_batch(TxId tx_id, TableId table_id, const std::vector<std::vector<ColumnData>>& rows) -> StatusOr<Lsn>
 {
     if (rows.empty()) {
         std::lock_guard lock(mtx_);
@@ -200,7 +209,7 @@ auto WalWriter::append_insert_batch(TxId tx_id, TableId table_id, const std::vec
     return append_record(tx_id, WalRecordType::kInsertBatch, payload);
 }
 
-auto WalWriter::append_delete(TxId tx_id, TableId table_id, const std::vector<RowId>& row_ids) -> Lsn
+auto WalWriter::append_delete(TxId tx_id, TableId table_id, const std::vector<RowId>& row_ids) -> StatusOr<Lsn>
 {
     std::vector<std::byte> payload;
     auto put = [&](const void* d, size_t n) {

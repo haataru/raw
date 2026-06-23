@@ -1,12 +1,13 @@
-# rawDB — Embedded Columnar Database
+# RawDB — Embedded Columnar Database
 
-**rawDB** — встраиваемая колоночная OLAP-база данных на современном C++23 без единой внешней зависимости (~9.4K строк кода). SQL-интерфейс поверх append-only storage на mmap с полноценными ACID транзакциями, Write-Ahead Logging (WAL), фоновыми Checkpoints (Fuzzy Checkpointing) и встроенным движком аналитических агрегаций.
+**RawDB** — встраиваемая колоночная OLAP-база данных на современном C++23 без единой внешней зависимости (~9.4K строк кода). SQL-интерфейс поверх append-only storage на mmap с полноценными ACID транзакциями, Write-Ahead Logging (WAL), фоновыми Checkpoints (Fuzzy Checkpointing) и встроенным движком аналитических агрегаций.
 
 ```
-INSERT throughput: ~2.2M RPS (с включенным WAL и транзакциями)
-SELECT full scan:  ~9.7M rows/sec (100K rows)
-Index lookup:      ~1.7M qps
-Concurrent mix:    15.8K ops/sec (8 threads)
+INSERT throughput: ~2.06M RPS (с включенным WAL и транзакциями)
+SELECT full scan:  ~277.6M rows/sec (10M строк)
+SELECT AVX filter: ~183.8M rows/sec (10M строк)
+Index lookup:      ~48.4K QPS (полный цикл: парсинг SQL + поиск + MVCC + чтение)
+Concurrent mix:    ~32.1K ops/sec (8 threads)
 ```
 
 ---
@@ -25,13 +26,13 @@ Concurrent mix:    15.8K ops/sec (8 threads)
 
 ---
 
-## Почему rawDB?
+## Почему RawDB?
 
 ### vs ClickHouse
-ClickHouse — распределенная колоночная СУБД со своим огромным деревом зависимостей. rawDB — **встраиваемая библиотека**: вы линкуете ее в свое приложение или импортируете как Python-модуль. Никакого сервера, HTTP, ZooKeeper. **2.2M INSERT/сек** в одном процессе прямо "из коробки" без единой настройки.
+ClickHouse — распределенная колоночная СУБД со своим огромным деревом зависимостей. RawDB — **встраиваемая библиотека**: вы линкуете ее в свое приложение или импортируете как Python-модуль. Никакого сервера, HTTP, ZooKeeper. **2.2M INSERT/сек** в одном процессе прямо "из коробки" без единой настройки.
 
 ### vs Cassandra / SQLite
-Cassandra — сложный кластер, требующий DevOps. SQLite — компактная и транзакционная БД, но строчная (row-based), что делает аналитику медленной. rawDB объединяет встраиваемость SQLite со скоростью колоночной архитектуры для агрегации миллионов строк за миллисекунды.
+Cassandra — сложный кластер, требующий DevOps. SQLite — компактная и транзакционная БД, но строчная (row-based), что делает аналитику медленной. RawDB объединяет встраиваемость SQLite со скоростью колоночной архитектуры для агрегации миллионов строк за миллисекунды.
 
 ---
 
@@ -39,12 +40,10 @@ Cassandra — сложный кластер, требующий DevOps. SQLite �
 
 Вся техническая информация вынесена в папку `docs/`. Рекомендуем начать с архитектуры:
 
-1. 🏛️ **[Архитектура и внутреннее устройство](docs/architecture.md)** — Storage, MVCC, WAL, GC, Checkpoints.
-2. ⚡ **[Аппаратное ускорение (SIMD & AVX2)](docs/simd_vectorization.md)** — Как векторизация и SIMD помогают фильтровать миллионы строк за миллисекунды.
-3. 📝 **[Диалект SQL](docs/sql_dialect.md)** — Типы данных, DDL, DML, DQL (SELECT, GROUP BY, агрегации).
-4. 🐍 **[Интеграция Python](docs/python_api.md)** — Установка, примеры использования из Python-скриптов.
-5. 💻 **[Command Line Interface (CLI)](docs/cli.md)** — Интерактивный REPL терминал (rawdb_cli) для управления базой данных без кода.
-6. ⚙️ **[Интеграция C / C++](docs/cpp_c_api.md)** — Подключение статической библиотеки и работа через C/C++ API.
+1. **[Архитектура и внутреннее устройство](docs/architecture.md)** — Storage, MVCC, WAL, GC, Checkpoints.
+2. **[Аппаратное ускорение (SIMD & AVX2)](docs/simd_vectorization.md)** — Как векторизация и SIMD помогают фильтровать миллионы строк за миллисекунды.
+3. **[Диалект SQL](docs/sql_dialect.md)** — Типы данных, DDL, DML, DQL (SELECT, GROUP BY, агрегации).
+4. **[Интеграция Python](docs/python_api.md)** — Установка, примеры использования из Python-скриптов.
 
 ---
 

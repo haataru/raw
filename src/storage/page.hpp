@@ -44,11 +44,12 @@ struct PageHeader
     uint32_t checksum;
     uint32_t row_count;
     uint32_t data_size;
+    uint32_t padding[3];
 
-    static constexpr size_t kSize = 20;
+    static constexpr size_t kSize = 32;
 };
 
-static_assert(sizeof(PageHeader) == PageHeader::kSize, "PageHeader must be packed (20 bytes)");
+static_assert(sizeof(PageHeader) == PageHeader::kSize, "PageHeader must be packed (32 bytes)");
 
 [[nodiscard]] auto compute_page_checksum(const std::byte *data, size_t len) -> uint32_t;
 

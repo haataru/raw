@@ -36,6 +36,8 @@ using StatusOr = std::expected<T, Status>;
             return "version not visible";
         case Status::kFatal:
             return "fatal error";
+        case Status::kNoSpace:
+            return "no space left on device";
     }
     return "unknown";
 }
