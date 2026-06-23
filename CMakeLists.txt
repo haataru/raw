@@ -14,7 +14,7 @@ include(cmake/CompilerOptions.cmake)
 # ──────────────────────────────────────────────
 # Library: rawdb (static)
 # ──────────────────────────────────────────────
-option(RAWDB_ENABLE_AVX2 "Enable AVX2 SIMD instructions" ON)
+option(RAWDB_ENABLE_AVX2 "Enable AVX2 globally (forces AVX2 everywhere, not recommended for portable builds)" OFF)
 
 if(RAWDB_ENABLE_AVX2 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     add_compile_options(-mavx2)
