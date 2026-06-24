@@ -372,6 +372,9 @@ auto BTree::insert_into_subtree(PageId node_off,
         vals[ci] = new_page;
         num++;
         std::memcpy(buf.data(), &num, sizeof(num));
+        if (fpw_callback_) {
+            fpw_callback_(node_off, file_.data() + node_off, node_size_);
+        }
         std::memcpy(file_.data() + node_off, buf.data(), node_size_);
         return Status::kOk;
     }
@@ -409,6 +412,9 @@ auto BTree::insert_into_subtree(PageId node_off,
             reinterpret_cast<uint64_t *>(buf.data() + kNodeHdr + sizeof(PageId) + kMaxKeys * ks);
         std::memcpy(dst_keys, combined_keys.get(), half * ks);
         std::memcpy(dst_vals, combined_vals.get(), half * sizeof(uint64_t));
+        if (fpw_callback_) {
+            fpw_callback_(node_off, file_.data() + node_off, node_size_);
+        }
         std::memcpy(file_.data() + node_off, buf.data(), node_size_);
     }
 
@@ -487,6 +493,9 @@ auto BTree::insert_into_leaf_node(const NodeReader &nr,
         vals[ipos] = row_id;
         num++;
         std::memcpy(buf.data(), &num, sizeof(num));
+        if (fpw_callback_) {
+            fpw_callback_(nr.node_off, file_.data() + nr.node_off, node_size_);
+        }
         std::memcpy(file_.data() + nr.node_off, buf.data(), node_size_);
         return Status::kOk;
     }
@@ -525,6 +534,9 @@ auto BTree::insert_into_leaf_node(const NodeReader &nr,
             reinterpret_cast<uint64_t *>(buf.data() + kNodeHdr + sizeof(PageId) + kMaxKeys * ks);
         std::memcpy(dst_keys, combined_keys.get(), half * ks);
         std::memcpy(dst_vals, combined_vals.get(), half * sizeof(uint64_t));
+        if (fpw_callback_) {
+            fpw_callback_(nr.node_off, file_.data() + nr.node_off, node_size_);
+        }
         std::memcpy(file_.data() + nr.node_off, buf.data(), node_size_);
     }
 
@@ -551,6 +563,16 @@ auto BTree::insert_into_leaf_node(const NodeReader &nr,
         split_pages.push_back(new_off);
     }
     return Status::kOk;
+}
+
+void BTree::write_page(PageId page_id, const std::byte *data, size_t size)
+{
+    std::unique_lock lock(*rw_mutex_);
+    if (page_id + size > file_.size()) {
+        auto _ = file_.resize(page_id + size);
+        (void)_;
+    }
+    std::memcpy(file_.data() + page_id, data, size);
 }
 
 } // namespace rawdb

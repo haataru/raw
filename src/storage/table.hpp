@@ -4,11 +4,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
+#include <queue>
 #include <shared_mutex>
 #include <string>
 #include <vector>
-#include <queue>
 
 #include "core/error.hpp"
 #include "core/types.hpp"
@@ -53,8 +54,11 @@ public:
     auto insert_row(TimestampAllocator &timestamps,
                     const std::vector<ColumnData> &columns) -> StatusOr<RowId>;
 
-    auto insert_rows(Timestamp ts, const std::vector<std::vector<ColumnData>> &rows) -> StatusOr<std::vector<RowId>>;
-    auto insert_rows(TimestampAllocator &timestamps, const std::vector<std::vector<ColumnData>> &rows) -> StatusOr<std::vector<RowId>>;
+    auto insert_rows(Timestamp ts, const std::vector<std::vector<ColumnData>> &rows)
+        -> StatusOr<std::vector<RowId>>;
+    auto insert_rows(TimestampAllocator &timestamps,
+                     const std::vector<std::vector<ColumnData>> &rows)
+        -> StatusOr<std::vector<RowId>>;
 
     auto flush_pending() -> Status;
 
@@ -82,7 +86,7 @@ public:
     [[nodiscard]] auto version_index_size() const -> size_t;
     [[nodiscard]] auto version_index_max_ts() const -> Timestamp;
     auto insert_version_entries(const IndexEntry *entries, size_t count) -> void;
-    void commit_rows(const std::vector<RowId>& row_ids, TxId tx_id, Timestamp commit_ts);
+    void commit_rows(const std::vector<RowId> &row_ids, TxId tx_id, Timestamp commit_ts);
 
     [[nodiscard]] auto file() -> MmapFile & { return file_; }
     [[nodiscard]] auto file() const -> const MmapFile & { return file_; }
@@ -110,6 +114,11 @@ public:
     void set_lsn(Lsn lsn) { current_lsn_.store(lsn, std::memory_order_release); }
     [[nodiscard]] auto lsn() const -> Lsn { return current_lsn_.load(std::memory_order_acquire); }
 
+    void set_flush_handler(FlushHandler *handler) { flush_handler_ = handler; }
+
+    using FPWCallback = std::function<void(PageId, const std::byte *, size_t)>;
+    void set_fpw_callback(FPWCallback cb) { fpw_callback_ = std::move(cb); }
+
     template <typename F>
     auto for_each_index(F &&f) -> void
     {
@@ -129,6 +138,7 @@ public:
     }
 
     auto add_index(IndexInfo info) -> void;
+    auto get_index_by_col(size_t col_idx) -> BTree *;
 
     static constexpr PageId kNotFoundPage = static_cast<PageId>(-1);
     static constexpr size_t kBatchSize = 8192; // max rows per page
@@ -161,13 +171,13 @@ private:
         RowId start_rid = 0;
 
         PendingBatch() = default;
-        PendingBatch(const PendingBatch&) = delete;
-        auto operator=(const PendingBatch&) -> PendingBatch& = delete;
+        PendingBatch(const PendingBatch &) = delete;
+        auto operator=(const PendingBatch &) -> PendingBatch & = delete;
     };
 
-    std::atomic<PendingBatch*> active_batch_{nullptr};
+    std::atomic<PendingBatch *> active_batch_{nullptr};
     std::vector<std::unique_ptr<PendingBatch>> free_batches_;
-    std::queue<std::unique_ptr<PendingBatch>> flush_queue_;
+    std::deque<std::unique_ptr<PendingBatch>> flush_queue_;
     std::mutex pool_mtx_;
     std::condition_variable pool_cv_;
 
@@ -177,15 +187,15 @@ private:
     auto get_free_batch() -> std::unique_ptr<PendingBatch>;
     void push_flush_queue(std::unique_ptr<PendingBatch> batch);
 
-    auto write_batch_to_page(PendingBatch* batch) -> Status;
+    auto write_batch_to_page(PendingBatch *batch) -> Status;
 
 public:
     auto pop_flush_queue() -> std::unique_ptr<PendingBatch>;
     void return_free_batch(std::unique_ptr<PendingBatch> batch);
 
-    void set_flush_handler(FlushHandler* handler) { flush_handler_ = handler; }
 private:
-    FlushHandler* flush_handler_ = nullptr;
+    FlushHandler *flush_handler_{nullptr};
+    FPWCallback fpw_callback_;
 };
 
 } // namespace rawdb

@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <shared_mutex>
 #include <vector>
@@ -56,6 +57,11 @@ public:
                              size_t b_len,
                              ColumnType type) -> int;
 
+    using FPWCallback = std::function<void(PageId, const std::byte *, size_t)>;
+    void set_fpw_callback(FPWCallback cb) { fpw_callback_ = std::move(cb); }
+
+    void write_page(PageId page_id, const std::byte *data, size_t size);
+
 private:
     MmapFile file_;
     ColumnType key_type_{ColumnType::kInt32};
@@ -63,6 +69,7 @@ private:
     size_t slot_key_size_{0};
     size_t node_size_{0};
     mutable std::unique_ptr<std::shared_mutex> rw_mutex_{std::make_unique<std::shared_mutex>()};
+    FPWCallback fpw_callback_;
 
     void compute_layout();
 

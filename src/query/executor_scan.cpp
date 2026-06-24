@@ -34,11 +34,11 @@ auto Executor::value_to_string(const ColumnData &col,
 #ifdef _WIN32
             struct tm tm_buf;
             gmtime_s(&tm_buf, &t);
-            struct tm* tm_ptr = &tm_buf;
+            struct tm *tm_ptr = &tm_buf;
 #else
             struct tm tm_buf;
             gmtime_r(&t, &tm_buf);
-            struct tm* tm_ptr = &tm_buf;
+            struct tm *tm_ptr = &tm_buf;
 #endif
             char buf[32];
             std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", tm_ptr);
@@ -60,6 +60,16 @@ auto Executor::value_to_string(const ColumnData &col,
             auto *offsets = reinterpret_cast<const uint32_t *>(static_cast<const void *>(raw));
             uint32_t start = (row_index == 0) ? 0 : offsets[row_index - 1];
             uint32_t end = offsets[row_index];
+            if (start > end) {
+                std::fprintf(stderr,
+                             "FATAL: start > end! row_index=%zu total_rows=%zu start=%u end=%u\n",
+                             row_index,
+                             total_rows,
+                             start,
+                             end);
+                std::fflush(stderr);
+                std::abort();
+            }
             auto *blob = raw + off_bytes;
             if (end > col.size - off_bytes)
                 return "";
@@ -67,6 +77,23 @@ auto Executor::value_to_string(const ColumnData &col,
         }
     }
     return "";
+}
+
+static size_t column_elem_size(ColumnType ct)
+{
+    switch (ct) {
+        case ColumnType::kInt32:
+            return 4;
+        case ColumnType::kTimestamp:
+        case ColumnType::kInt64:
+            return 8;
+        case ColumnType::kFloat64:
+            return 8;
+        case ColumnType::kBool:
+            return 1;
+        default:
+            return 0;
+    }
 }
 
 auto Executor::read_table_columns(Table &table) -> StatusOr<TableScanResult>
@@ -88,12 +115,8 @@ auto Executor::read_table_columns(Table &table) -> StatusOr<TableScanResult>
         return scan;
     }
 
-    size_t total_rows = table.row_count();
-    for (size_t ci = 0; ci < schema.column_count(); ++ci) {
-        if (schema.columns[ci] == ColumnType::kVarChar && total_rows > 0) {
-            scan.col_data[ci].resize(total_rows * sizeof(uint32_t));
-        }
-    }
+    std::vector<std::vector<uint32_t>> varchar_offs(schema.column_count());
+    std::vector<std::vector<std::byte>> varchar_blobs(schema.column_count());
 
     PageId offset = 0;
     size_t rows_seen = 0;
@@ -109,51 +132,51 @@ auto Executor::read_table_columns(Table &table) -> StatusOr<TableScanResult>
         auto *bh = reinterpret_cast<const BatchHeader *>(payload);
         auto *metas = reinterpret_cast<const ColMeta *>(bh + 1);
 
-        for (size_t ci = 0; ci < schema.column_count() && ci < bh->col_count; ++ci) {
+        for (size_t ci = 0; ci < schema.column_count(); ++ci) {
             ColumnType col_type = schema.columns[ci];
-            const std::byte *src = payload + metas[ci].data_off;
-            size_t src_size = metas[ci].data_size;
+            bool missing = (ci >= bh->col_count);
+            const std::byte *src = missing ? nullptr : payload + metas[ci].data_off;
+            size_t src_size = missing ? 0 : metas[ci].data_size;
 
             if (col_type == ColumnType::kVarChar) {
                 size_t off_bytes = row_count * sizeof(uint32_t);
-                if (src_size <= off_bytes)
+                uint32_t adj = varchar_offs[ci].empty() ? 0 : varchar_offs[ci].back();
+
+                if (src_size <= off_bytes) {
+                    for (size_t r = 0; r < row_count; ++r) {
+                        varchar_offs[ci].push_back(adj);
+                    }
                     continue;
+                }
 
                 auto *page_offs =
                     reinterpret_cast<const uint32_t *>(static_cast<const void *>(src));
-                uint32_t adj =
-                    (rows_seen == 0)
-                        ? 0
-                        : *reinterpret_cast<const uint32_t *>(scan.col_data[ci].data() +
-                                                              (rows_seen - 1) * sizeof(uint32_t));
 
-                size_t needed = (rows_seen + row_count) * sizeof(uint32_t);
-                if (scan.col_data[ci].size() < needed) {
-                    scan.col_data[ci].resize(needed);
-                }
-
-                auto *go = reinterpret_cast<uint32_t *>(
-                    static_cast<void *>(scan.col_data[ci].data() + rows_seen * sizeof(uint32_t)));
                 for (size_t r = 0; r < row_count; ++r) {
-                    go[r] = page_offs[r] + adj;
+                    varchar_offs[ci].push_back(page_offs[r] + adj);
                 }
 
                 const std::byte *blob_src = src + off_bytes;
                 size_t blob_size = src_size - off_bytes;
-                scan.col_data[ci].insert(scan.col_data[ci].end(), blob_src, blob_src + blob_size);
+                varchar_blobs[ci].insert(varchar_blobs[ci].end(), blob_src, blob_src + blob_size);
             }
             else {
                 size_t old_size = scan.col_data[ci].size();
-                scan.col_data[ci].resize(old_size + src_size);
-                std::memcpy(scan.col_data[ci].data() + old_size, src, src_size);
+                size_t add_size = missing ? (row_count * column_elem_size(col_type)) : src_size;
+                scan.col_data[ci].resize(old_size + add_size, std::byte{0});
+                if (!missing) {
+                    std::memcpy(scan.col_data[ci].data() + old_size, src, src_size);
+                }
             }
 
-            if (metas[ci].nulls_off != 0) {
-                size_t bm_bytes = (row_count + 7) / 8;
+            size_t bm_bytes = (row_count + 7) / 8;
+            size_t old_ns = scan.col_nulls[ci].size();
+            scan.col_nulls[ci].resize(
+                old_ns + bm_bytes,
+                missing ? static_cast<uint8_t>(0xFF) : static_cast<uint8_t>(0));
+            if (!missing && metas[ci].nulls_off != 0) {
                 const uint8_t *bm_src =
                     reinterpret_cast<const uint8_t *>(payload + metas[ci].nulls_off);
-                size_t old_ns = scan.col_nulls[ci].size();
-                scan.col_nulls[ci].resize(old_ns + bm_bytes);
                 std::memcpy(scan.col_nulls[ci].data() + old_ns, bm_src, bm_bytes);
             }
         }
@@ -163,6 +186,19 @@ auto Executor::read_table_columns(Table &table) -> StatusOr<TableScanResult>
     }
 
     for (size_t ci = 0; ci < schema.column_count(); ++ci) {
+        if (schema.columns[ci] == ColumnType::kVarChar) {
+            size_t off_bytes = varchar_offs[ci].size() * sizeof(uint32_t);
+            scan.col_data[ci].resize(off_bytes + varchar_blobs[ci].size());
+            if (off_bytes > 0) {
+                std::memcpy(scan.col_data[ci].data(), varchar_offs[ci].data(), off_bytes);
+            }
+            if (!varchar_blobs[ci].empty()) {
+                std::memcpy(scan.col_data[ci].data() + off_bytes,
+                            varchar_blobs[ci].data(),
+                            varchar_blobs[ci].size());
+            }
+        }
+
         scan.columns[ci].type = schema.columns[ci];
         scan.columns[ci].data = scan.col_data[ci].data();
         scan.columns[ci].size = scan.col_data[ci].size();

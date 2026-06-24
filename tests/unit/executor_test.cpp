@@ -2,8 +2,8 @@
 
 #include <gtest/gtest.h>
 
-#include <cstring>
 #include <algorithm>
+#include <cstring>
 
 using namespace rawdb;
 
@@ -19,7 +19,7 @@ TEST(ExecutorTest, Join)
     // Create users table
     auto st_cu = exec.execute("CREATE TABLE users (id INT32, name VARCHAR)");
     ASSERT_TRUE(st_cu.has_value());
-    
+
     // Create orders table
     auto st_co = exec.execute("CREATE TABLE orders (id INT32, user_id INT32, amount FLOAT64)");
     ASSERT_TRUE(st_co.has_value());
@@ -36,28 +36,30 @@ TEST(ExecutorTest, Join)
     // No order for Charlie
 
     // Query with JOIN
-    auto q_res = exec.execute("SELECT users.name, orders.amount FROM users JOIN orders ON users.id = orders.user_id");
+    auto q_res = exec.execute(
+        "SELECT users.name, orders.amount FROM users JOIN orders ON users.id = orders.user_id");
     if (!q_res.has_value()) {
         std::cerr << "Query error: " << q_res.error() << std::endl;
     }
     ASSERT_TRUE(q_res.has_value());
-    
+
     const auto &res = q_res.value();
     ASSERT_EQ(res.column_names.size(), 2);
     EXPECT_EQ(res.column_names[0], "users.name");
     EXPECT_EQ(res.column_names[1], "orders.amount");
-    
+
     ASSERT_EQ(res.rows.size(), 3);
-    
+
     // Check results
     // Wait, order is not guaranteed because of hash table.
     // Let's sort the results to verify easily
     auto sorted_rows = res.rows;
     std::sort(sorted_rows.begin(), sorted_rows.end(), [](const auto &a, const auto &b) {
-        if (a[0] != b[0]) return a[0] < b[0];
+        if (a[0] != b[0])
+            return a[0] < b[0];
         return std::stod(a[1]) < std::stod(b[1]);
     });
-    
+
     EXPECT_EQ(sorted_rows[0][0], "Alice");
     EXPECT_EQ(sorted_rows[0][1], "50.500000"); // std::to_string output formatting
     EXPECT_EQ(sorted_rows[1][0], "Alice");

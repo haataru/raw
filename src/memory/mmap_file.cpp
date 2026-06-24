@@ -125,7 +125,9 @@ auto MmapFile::resize(size_t new_size) -> Status
                 ::mmap(nullptr, size_, PROT_READ | PROT_WRITE, MAP_SHARED, fd_, 0));
             if (data_ == MAP_FAILED) {
                 data_ = nullptr;
-                return {Status::kFatal, "failed to restore mmap after ftruncate error: " + std::string(std::strerror(errno))};
+                return {Status::kFatal,
+                        "failed to restore mmap after ftruncate error: " +
+                            std::string(std::strerror(errno))};
             }
         }
         if (err == ENOSPC) {

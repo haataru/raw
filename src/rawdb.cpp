@@ -7,7 +7,6 @@
 #include "core/config.hpp"
 #include "core/error.hpp"
 #include "core/types.hpp"
-#include "core/types.hpp"
 #include "db/database.hpp"
 #include "query/connection.hpp"
 #include "query/executor.hpp"

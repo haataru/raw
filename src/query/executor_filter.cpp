@@ -1,8 +1,8 @@
 #include <algorithm>
 #include <cmath>
-#include "query/simd_ops.hpp"
 
 #include "query/executor.hpp"
+#include "query/simd_ops.hpp"
 
 namespace rawdb
 {
@@ -87,38 +87,47 @@ auto Filter::evaluate(const std::vector<ColumnData> &columns,
 {
     if (!expr) {
         std::vector<size_t> all(row_count);
-        for(size_t i = 0; i < row_count; ++i) all[i] = i;
+        for (size_t i = 0; i < row_count; ++i)
+            all[i] = i;
         return all;
     }
 
     if (expr->type == ExprNode::Type::kAnd) {
         auto left = evaluate(columns, schema, row_count, expr->left.get());
-        if (!left) return left;
+        if (!left)
+            return left;
         auto right = evaluate(columns, schema, row_count, expr->right.get());
-        if (!right) return right;
+        if (!right)
+            return right;
 
         std::vector<size_t> result;
-        std::set_intersection(left->begin(), left->end(),
-                              right->begin(), right->end(),
+        std::set_intersection(left->begin(),
+                              left->end(),
+                              right->begin(),
+                              right->end(),
                               std::back_inserter(result));
         return result;
     }
 
     if (expr->type == ExprNode::Type::kOr) {
         auto left = evaluate(columns, schema, row_count, expr->left.get());
-        if (!left) return left;
+        if (!left)
+            return left;
         auto right = evaluate(columns, schema, row_count, expr->right.get());
-        if (!right) return right;
+        if (!right)
+            return right;
 
         std::vector<size_t> result;
-        std::set_union(left->begin(), left->end(),
-                       right->begin(), right->end(),
+        std::set_union(left->begin(),
+                       left->end(),
+                       right->begin(),
+                       right->end(),
                        std::back_inserter(result));
         return result;
     }
 
     // kPredicate
-    const Predicate& pred = expr->pred;
+    const Predicate &pred = expr->pred;
 
     auto col_idx = get_column_index(schema, pred.column.name);
     if (!col_idx)
@@ -139,51 +148,66 @@ auto Filter::evaluate(const std::vector<ColumnData> &columns,
         if (col_type == ColumnType::kInt64 || col_type == ColumnType::kTimestamp) {
             auto *arr = static_cast<const int64_t *>(static_cast<const void *>(col.data));
             std::vector<int64_t> in_set;
-            for (const auto& v : pred.in_values) {
-                if (std::holds_alternative<int64_t>(v.data)) in_set.push_back(std::get<int64_t>(v.data));
+            for (const auto &v : pred.in_values) {
+                if (std::holds_alternative<int64_t>(v.data))
+                    in_set.push_back(std::get<int64_t>(v.data));
             }
             std::sort(in_set.begin(), in_set.end());
             for (size_t i = 0; i < row_count; ++i) {
-                if (is_null(i)) continue;
-                if (std::binary_search(in_set.begin(), in_set.end(), arr[i])) result.push_back(i);
+                if (is_null(i))
+                    continue;
+                if (std::binary_search(in_set.begin(), in_set.end(), arr[i]))
+                    result.push_back(i);
             }
-        } else if (col_type == ColumnType::kInt32) {
+        }
+        else if (col_type == ColumnType::kInt32) {
             auto *arr = static_cast<const int32_t *>(static_cast<const void *>(col.data));
             std::vector<int32_t> in_set;
-            for (const auto& v : pred.in_values) {
-                if (std::holds_alternative<int64_t>(v.data)) in_set.push_back(static_cast<int32_t>(std::get<int64_t>(v.data)));
+            for (const auto &v : pred.in_values) {
+                if (std::holds_alternative<int64_t>(v.data))
+                    in_set.push_back(static_cast<int32_t>(std::get<int64_t>(v.data)));
             }
             std::sort(in_set.begin(), in_set.end());
             for (size_t i = 0; i < row_count; ++i) {
-                if (is_null(i)) continue;
-                if (std::binary_search(in_set.begin(), in_set.end(), arr[i])) result.push_back(i);
+                if (is_null(i))
+                    continue;
+                if (std::binary_search(in_set.begin(), in_set.end(), arr[i]))
+                    result.push_back(i);
             }
-        } else if (col_type == ColumnType::kFloat64) {
+        }
+        else if (col_type == ColumnType::kFloat64) {
             auto *arr = static_cast<const double *>(static_cast<const void *>(col.data));
             std::vector<double> in_set;
-            for (const auto& v : pred.in_values) {
-                if (std::holds_alternative<double>(v.data)) in_set.push_back(std::get<double>(v.data));
+            for (const auto &v : pred.in_values) {
+                if (std::holds_alternative<double>(v.data))
+                    in_set.push_back(std::get<double>(v.data));
             }
             std::sort(in_set.begin(), in_set.end());
             for (size_t i = 0; i < row_count; ++i) {
-                if (is_null(i)) continue;
-                if (std::binary_search(in_set.begin(), in_set.end(), arr[i])) result.push_back(i);
+                if (is_null(i))
+                    continue;
+                if (std::binary_search(in_set.begin(), in_set.end(), arr[i]))
+                    result.push_back(i);
             }
-        } else if (col_type == ColumnType::kVarChar) {
+        }
+        else if (col_type == ColumnType::kVarChar) {
             auto *offsets = static_cast<const uint32_t *>(static_cast<const void *>(col.data));
             auto *blob = static_cast<const std::byte *>(col.data) + row_count * sizeof(uint32_t);
             std::vector<std::string> in_set;
-            for (const auto& v : pred.in_values) {
-                if (std::holds_alternative<std::string>(v.data)) in_set.push_back(std::get<std::string>(v.data));
+            for (const auto &v : pred.in_values) {
+                if (std::holds_alternative<std::string>(v.data))
+                    in_set.push_back(std::get<std::string>(v.data));
             }
             std::sort(in_set.begin(), in_set.end());
             for (size_t i = 0; i < row_count; ++i) {
-                if (is_null(i)) continue;
+                if (is_null(i))
+                    continue;
                 uint32_t start = (i == 0) ? 0 : offsets[i - 1];
                 uint32_t end = offsets[i];
                 std::string_view v(reinterpret_cast<const char *>(blob + start), end - start);
                 auto it = std::lower_bound(in_set.begin(), in_set.end(), v);
-                if (it != in_set.end() && *it == v) result.push_back(i);
+                if (it != in_set.end() && *it == v)
+                    result.push_back(i);
             }
         }
         return result;
@@ -191,12 +215,18 @@ auto Filter::evaluate(const std::vector<ColumnData> &columns,
 
     auto get_simd_op = [](CmpOp op) -> simd::Op {
         switch (op) {
-            case CmpOp::kEq: return simd::Op::kEq;
-            case CmpOp::kGt: return simd::Op::kGt;
-            case CmpOp::kLt: return simd::Op::kLt;
-            case CmpOp::kGe: return simd::Op::kGe;
-            case CmpOp::kLe: return simd::Op::kLe;
-            default: return simd::Op::kEq;
+            case CmpOp::kEq:
+                return simd::Op::kEq;
+            case CmpOp::kGt:
+                return simd::Op::kGt;
+            case CmpOp::kLt:
+                return simd::Op::kLt;
+            case CmpOp::kGe:
+                return simd::Op::kGe;
+            case CmpOp::kLe:
+                return simd::Op::kLe;
+            default:
+                return simd::Op::kEq;
         }
     };
 
@@ -208,12 +238,16 @@ auto Filter::evaluate(const std::vector<ColumnData> &columns,
                 std::vector<size_t> raw;
                 simd::filter(arr, row_count, val, get_simd_op(pred.op), raw);
                 for (size_t i : raw) {
-                    if (!is_null(i)) result.push_back(i);
+                    if (!is_null(i))
+                        result.push_back(i);
                 }
-            } else {
+            }
+            else {
                 for (size_t i = 0; i < row_count; ++i) {
-                    if (is_null(i)) continue;
-                    if (apply_int(arr[i], val, pred.op)) result.push_back(i);
+                    if (is_null(i))
+                        continue;
+                    if (apply_int(arr[i], val, pred.op))
+                        result.push_back(i);
                 }
             }
         }
@@ -224,12 +258,16 @@ auto Filter::evaluate(const std::vector<ColumnData> &columns,
                 std::vector<size_t> raw;
                 simd::filter(arr, row_count, val32, get_simd_op(pred.op), raw);
                 for (size_t i : raw) {
-                    if (!is_null(i)) result.push_back(i);
+                    if (!is_null(i))
+                        result.push_back(i);
                 }
-            } else {
+            }
+            else {
                 for (size_t i = 0; i < row_count; ++i) {
-                    if (is_null(i)) continue;
-                    if (apply_int(arr[i], val, pred.op)) result.push_back(i);
+                    if (is_null(i))
+                        continue;
+                    if (apply_int(arr[i], val, pred.op))
+                        result.push_back(i);
                 }
             }
         }
@@ -242,12 +280,16 @@ auto Filter::evaluate(const std::vector<ColumnData> &columns,
                 std::vector<size_t> raw;
                 simd::filter(arr, row_count, val, get_simd_op(pred.op), raw);
                 for (size_t i : raw) {
-                    if (!is_null(i)) result.push_back(i);
+                    if (!is_null(i))
+                        result.push_back(i);
                 }
-            } else {
+            }
+            else {
                 for (size_t i = 0; i < row_count; ++i) {
-                    if (is_null(i)) continue;
-                    if (apply_double(arr[i], val, pred.op)) result.push_back(i);
+                    if (is_null(i))
+                        continue;
+                    if (apply_double(arr[i], val, pred.op))
+                        result.push_back(i);
                 }
             }
         }

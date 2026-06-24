@@ -1,7 +1,9 @@
 #include "db/database.hpp"
 
+#include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 
 #include "index/btree.hpp"
 #include "query/executor.hpp"
@@ -88,7 +90,8 @@ Database::Database() = default;
 
 Database::~Database() { close(); }
 
-auto Database::open(const std::filesystem::path &path) -> Status
+auto Database::open(const std::filesystem::path &path,
+                    std::optional<uint64_t> recovery_target_time_ms) -> Status
 {
     if (is_open_) {
         return Status::kInvalidArgument;
@@ -111,6 +114,10 @@ auto Database::open(const std::filesystem::path &path) -> Status
                         continue;
                     tables_.emplace_back(name, std::move(*schema));
                     auto &tbl = tables_.back();
+                    TableId tid = static_cast<TableId>(tables_.size() - 1);
+                    tbl.set_fpw_callback([this, tid](PageId p, const std::byte *d, size_t s) {
+                        this->fpw_callback(tid, p, -1, d, s);
+                    });
                     if (tbl.open_file(path_) != Status::kOk) {
                         tables_.pop_back();
                         continue;
@@ -144,7 +151,8 @@ auto Database::open(const std::filesystem::path &path) -> Status
                 catch (...) {
                     continue;
                 }
-                for (auto &tbl : tables_) {
+                for (size_t i = 0; i < tables_.size(); ++i) {
+                    auto &tbl = tables_[i];
                     if (tbl.name() != tbl_name)
                         continue;
                     if (col_idx >= tbl.schema().column_count())
@@ -157,6 +165,13 @@ auto Database::open(const std::filesystem::path &path) -> Status
                     info.column_name = tbl.schema().names[col_idx];
                     info.column_idx = col_idx;
                     info.column_type = tbl.schema().columns[col_idx];
+                    int32_t cid = static_cast<int32_t>(col_idx);
+                    TableId tid = static_cast<TableId>(i);
+                    tree_r->set_fpw_callback(
+                        [this, tid, cid](PageId p, const std::byte *d, size_t s) {
+                            this->fpw_callback(tid, p, cid, d, s);
+                        });
+
                     info.tree = std::move(*tree_r);
                     tbl.add_index(std::move(info));
                     break;
@@ -201,38 +216,204 @@ auto Database::open(const std::filesystem::path &path) -> Status
 
     // 2. Open WalWriter (which initializes its next_lsn_)
     auto wal_st = wal_writer_.open(path_);
-    if (wal_st != Status::kOk) return wal_st;
+    if (wal_st != Status::kOk)
+        return wal_st;
 
-    // 3. Replay WAL from checkpoint_lsn
+    // 3. Replay WAL from checkpoint_lsn (Two passes for PITR and proper recovery)
     WalReader wal_reader;
+    std::unordered_map<TxId, Timestamp> committed_txns;
+
     if (wal_reader.open(path_) == Status::kOk) {
+        // --- Pass 1: Restore Full Page Images & Collect Committed TxIds ---
         while (true) {
             auto rec = wal_reader.next();
-            if (!rec) break;
-            if (rec->header.lsn <= checkpoint_lsn) continue;
-            
-            if (rec->header.type == WalRecordType::kInsert && rec->payload.size() >= sizeof(TableId) + sizeof(uint32_t)) {
-                TableId tid;
-                std::memcpy(&tid, rec->payload.data(), sizeof(TableId));
-                if (tid < tables_.size()) {
-                    auto& table = tables_[tid];
-                    if (rec->header.lsn > table.lsn()) {
-                        // In a real system, we would re-parse the columns and insert.
-                        // However, since we flush_pending and sync, data is already in pages!
-                        // The WAL is just for crash recovery of un-flushed pages.
-                        // Wait, since we wrote the exact payload format, we can parse it here.
-                        // But for simplicity of this prototype and since we already sync often, we can leave the re-insert logic simple or just accept that checkpointing flushes everything.
-                        // Actually, I should parse the columns from payload and call table.recover_insert.
+            if (!rec)
+                break;
+            if (rec->header.lsn <= checkpoint_lsn)
+                continue;
+            if (recovery_target_time_ms && rec->header.physical_time_ms > *recovery_target_time_ms)
+                break;
+
+            if (rec->header.type == WalRecordType::kCommit &&
+                rec->payload.size() >= sizeof(Timestamp)) {
+                Timestamp commit_ts;
+                std::memcpy(&commit_ts, rec->payload.data(), sizeof(Timestamp));
+                committed_txns[rec->header.tx_id] = commit_ts;
+                std::cout << "Replayed kCommit tx_id: " << rec->header.tx_id << std::endl;
+            }
+            else if (rec->header.type == WalRecordType::kFullPageImage) {
+                if (rec->payload.size() > sizeof(TableId) + sizeof(PageId) + sizeof(int32_t)) {
+                    TableId tid;
+                    PageId pid;
+                    int32_t file_id;
+                    size_t pos = 0;
+                    std::memcpy(&tid, rec->payload.data() + pos, sizeof(tid));
+                    pos += sizeof(tid);
+                    std::memcpy(&pid, rec->payload.data() + pos, sizeof(pid));
+                    pos += sizeof(pid);
+                    std::memcpy(&file_id, rec->payload.data() + pos, sizeof(file_id));
+                    pos += sizeof(file_id);
+                    size_t data_sz = rec->payload.size() - pos;
+                    const std::byte *page_data = rec->payload.data() + pos;
+
+                    if (tid < tables_.size()) {
+                        auto &table = tables_[tid];
+                        if (file_id < 0) {
+                            if (pid + data_sz > table.file().size()) {
+                                auto _ = table.file().resize(pid + data_sz);
+                                (void)_;
+                            }
+                            std::memcpy(table.file().data() + pid, page_data, data_sz);
+                        }
+                        else {
+                            if (auto *tree = table.get_index_by_col(static_cast<size_t>(file_id))) {
+                                tree->write_page(pid, page_data, data_sz);
+                            }
+                        }
                     }
                 }
             }
         }
         wal_reader.close();
+
+        // --- Pass 2: Replay Logical Operations (Insert) ---
+        if (wal_reader.open(path_) == Status::kOk) {
+            while (true) {
+                auto rec = wal_reader.next();
+                if (!rec)
+                    break;
+                if (rec->header.lsn <= checkpoint_lsn)
+                    continue;
+                if (recovery_target_time_ms &&
+                    rec->header.physical_time_ms > *recovery_target_time_ms)
+                    break;
+
+                if (rec->header.type == WalRecordType::kInsert &&
+                    rec->payload.size() >= sizeof(TableId) + sizeof(uint32_t)) {
+                    if (auto it = committed_txns.find(rec->header.tx_id);
+                        it != committed_txns.end()) {
+                        TableId tid;
+                        size_t pos = 0;
+                        std::memcpy(&tid, rec->payload.data() + pos, sizeof(TableId));
+                        pos += sizeof(TableId);
+                        uint32_t col_count;
+                        std::memcpy(&col_count, rec->payload.data() + pos, sizeof(uint32_t));
+                        pos += sizeof(uint32_t);
+
+                        std::cout << "Replaying kInsert for tx_id: " << rec->header.tx_id
+                                  << " table_id: " << tid << std::endl;
+
+                        if (tid < tables_.size()) {
+                            auto &table = tables_[tid];
+                            if (rec->header.lsn > table.lsn()) {
+                                std::vector<ColumnData> columns;
+                                for (uint32_t i = 0; i < col_count; ++i) {
+                                    uint8_t type_val;
+                                    std::memcpy(&type_val,
+                                                rec->payload.data() + pos,
+                                                sizeof(uint8_t));
+                                    pos += sizeof(uint8_t);
+                                    uint32_t size_val;
+                                    std::memcpy(&size_val,
+                                                rec->payload.data() + pos,
+                                                sizeof(uint32_t));
+                                    pos += sizeof(uint32_t);
+                                    const std::byte *data_ptr = rec->payload.data() + pos;
+                                    pos += size_val;
+                                    columns.push_back({static_cast<ColumnType>(type_val),
+                                                       data_ptr,
+                                                       size_val,
+                                                       nullptr});
+                                }
+
+                                auto row_id_or =
+                                    table.insert_row(rec->header.tx_id | kTxIdFlag, columns);
+                                if (row_id_or) {
+                                    std::cout << "Successfully inserted row " << *row_id_or
+                                              << std::endl;
+                                    table.commit_rows({*row_id_or}, rec->header.tx_id, it->second);
+                                }
+                            }
+                            else {
+                                std::cout << "Skipped insert due to LSN" << std::endl;
+                            }
+                        }
+                    }
+                    else {
+                        std::cout << "Skipped insert: tx_id " << rec->header.tx_id
+                                  << " not in committed_txns" << std::endl;
+                    }
+                }
+                else if (rec->header.type == WalRecordType::kInsertBatch &&
+                         rec->payload.size() >= sizeof(TableId) + sizeof(uint32_t) * 2) {
+                    if (auto it = committed_txns.find(rec->header.tx_id);
+                        it != committed_txns.end()) {
+                        TableId tid;
+                        size_t pos = 0;
+                        std::memcpy(&tid, rec->payload.data() + pos, sizeof(TableId));
+                        pos += sizeof(TableId);
+                        uint32_t row_count;
+                        std::memcpy(&row_count, rec->payload.data() + pos, sizeof(uint32_t));
+                        pos += sizeof(uint32_t);
+                        uint32_t col_count;
+                        std::memcpy(&col_count, rec->payload.data() + pos, sizeof(uint32_t));
+                        pos += sizeof(uint32_t);
+
+                        if (tid < tables_.size()) {
+                            auto &table = tables_[tid];
+                            if (rec->header.lsn > table.lsn()) {
+                                std::vector<std::vector<ColumnData>> rows;
+                                rows.reserve(row_count);
+                                for (uint32_t r = 0; r < row_count; ++r) {
+                                    std::vector<ColumnData> columns;
+                                    columns.reserve(col_count);
+                                    for (uint32_t i = 0; i < col_count; ++i) {
+                                        uint8_t type_val;
+                                        std::memcpy(&type_val,
+                                                    rec->payload.data() + pos,
+                                                    sizeof(uint8_t));
+                                        pos += sizeof(uint8_t);
+                                        uint32_t size_val;
+                                        std::memcpy(&size_val,
+                                                    rec->payload.data() + pos,
+                                                    sizeof(uint32_t));
+                                        pos += sizeof(uint32_t);
+                                        const std::byte *data_ptr = rec->payload.data() + pos;
+                                        pos += size_val;
+                                        columns.push_back({static_cast<ColumnType>(type_val),
+                                                           data_ptr,
+                                                           size_val,
+                                                           nullptr});
+                                    }
+                                    rows.push_back(std::move(columns));
+                                }
+
+                                auto row_ids_or =
+                                    table.insert_rows(rec->header.tx_id | kTxIdFlag, rows);
+                                if (row_ids_or) {
+                                    table.commit_rows(*row_ids_or, rec->header.tx_id, it->second);
+                                }
+                            }
+                            else {
+                                std::cout << "Skipped insert batch due to LSN" << std::endl;
+                            }
+                        }
+                    }
+                    else {
+                        // Skip uncommitted
+                    }
+                }
+            }
+            wal_reader.close();
+        }
     }
 
     // 4. Start checkpointer thread
     stop_checkpointer_ = false;
     checkpointer_thread_ = std::make_unique<std::thread>(&Database::checkpointer_thread_func, this);
+
+    stop_auto_backup_ = false;
+    auto_backup_thread_ = std::make_unique<std::thread>(&Database::auto_backup_thread_func, this);
 
     is_open_ = true;
     return Status::kOk;
@@ -253,7 +434,7 @@ void Database::close()
     if (flush_handler_) {
         flush_handler_->flush_all();
     }
-    
+
     stop_checkpointer_ = true;
     checkpointer_cv_.notify_all();
     if (checkpointer_thread_ && checkpointer_thread_->joinable()) {
@@ -261,10 +442,17 @@ void Database::close()
     }
     checkpointer_thread_.reset();
 
+    stop_auto_backup_ = true;
+    auto_backup_cv_.notify_all();
+    if (auto_backup_thread_ && auto_backup_thread_->joinable()) {
+        auto_backup_thread_->join();
+    }
+    auto_backup_thread_.reset();
+
     gc_->stop();
     flush_handler_.reset();
     gc_.reset();
-    
+
     wal_writer_.close();
 
     {
@@ -290,6 +478,9 @@ auto Database::create_table(const std::string &name, Schema schema) -> StatusOr<
     TableId id = static_cast<TableId>(tables_.size());
     tables_.emplace_back(name, std::move(schema));
     auto &tbl = tables_.back();
+    tbl.set_fpw_callback([this, id](PageId p, const std::byte *d, size_t s) {
+        this->fpw_callback(id, p, -1, d, s);
+    });
     if (flush_handler_) {
         tbl.set_flush_handler(flush_handler_.get());
     }
@@ -310,14 +501,17 @@ auto Database::create_table(const std::string &name, Schema schema) -> StatusOr<
     return id;
 }
 
-auto Database::insert(TableId table_id, const std::vector<ColumnData> &columns, const std::shared_ptr<Transaction>& txn) -> StatusOr<RowId>
+auto Database::insert(TableId table_id,
+                      const std::vector<ColumnData> &columns,
+                      const std::shared_ptr<Transaction> &txn) -> StatusOr<RowId>
 {
     if (table_id >= tables_.size()) {
         return std::unexpected(Status::kInvalidArgument);
     }
 
     auto lsn_res = wal_writer_.append_insert(txn ? txn->tx_id : kInvalidTxId, table_id, columns);
-    if (!lsn_res) return std::unexpected(lsn_res.error());
+    if (!lsn_res)
+        return std::unexpected(lsn_res.error());
     tables_[table_id].set_lsn(*lsn_res);
 
     StatusOr<RowId> res;
@@ -326,29 +520,36 @@ auto Database::insert(TableId table_id, const std::vector<ColumnData> &columns, 
         if (res) {
             txn->write_set[table_id].push_back(*res);
         }
-    } else {
+    }
+    else {
         res = tables_[table_id].insert_row(timestamps_, columns);
     }
     return res;
 }
 
-auto Database::insert_batch(TableId table_id, const std::vector<std::vector<ColumnData>> &rows, const std::shared_ptr<Transaction>& txn) -> StatusOr<std::vector<RowId>>
+auto Database::insert_batch(TableId table_id,
+                            const std::vector<std::vector<ColumnData>> &rows,
+                            const std::shared_ptr<Transaction> &txn) -> StatusOr<std::vector<RowId>>
 {
     if (table_id >= tables_.size()) {
         return std::unexpected(Status::kInvalidArgument);
     }
 
     auto lsn_res = wal_writer_.append_insert_batch(txn ? txn->tx_id : kInvalidTxId, table_id, rows);
-    if (!lsn_res) return std::unexpected(lsn_res.error());
+    if (!lsn_res)
+        return std::unexpected(lsn_res.error());
     tables_[table_id].set_lsn(*lsn_res);
 
     StatusOr<std::vector<RowId>> res;
     if (txn) {
         res = tables_[table_id].insert_rows(txn->tx_id | kTxIdFlag, rows);
         if (res) {
-            txn->write_set[table_id].insert(txn->write_set[table_id].end(), res->begin(), res->end());
+            txn->write_set[table_id].insert(txn->write_set[table_id].end(),
+                                            res->begin(),
+                                            res->end());
         }
-    } else {
+    }
+    else {
         res = tables_[table_id].insert_rows(timestamps_, rows);
     }
     return res;
@@ -451,14 +652,17 @@ auto Database::vacuum(TableId table_id) -> Status
     return Status::kOk;
 }
 
-auto Database::delete_rows(TableId table_id, std::vector<RowId> row_ids, const std::shared_ptr<Transaction>& txn) -> Status
+auto Database::delete_rows(TableId table_id,
+                           std::vector<RowId> row_ids,
+                           const std::shared_ptr<Transaction> &txn) -> Status
 {
     if (table_id >= tables_.size()) {
         return Status::kInvalidArgument;
     }
 
     auto lsn_res = wal_writer_.append_delete(txn ? txn->tx_id : kInvalidTxId, table_id, row_ids);
-    if (!lsn_res) return lsn_res.error();
+    if (!lsn_res)
+        return lsn_res.error();
     tables_[table_id].set_lsn(*lsn_res);
 
     Timestamp ts = txn ? (txn->tx_id | kTxIdFlag) : timestamps_.allocate_ts();
@@ -470,9 +674,9 @@ auto Database::delete_rows(TableId table_id, std::vector<RowId> row_ids, const s
     }
 
     tables_[table_id].insert_version_entries(entries.data(), entries.size());
-    
+
     if (txn) {
-        auto& ws = txn->write_set[table_id];
+        auto &ws = txn->write_set[table_id];
         ws.insert(ws.end(), row_ids.begin(), row_ids.end());
     }
 
@@ -481,18 +685,20 @@ auto Database::delete_rows(TableId table_id, std::vector<RowId> row_ids, const s
 
 auto Database::checkpoint() -> Status
 {
+    std::lock_guard exec_lock(checkpoint_exec_mtx_);
     Lsn checkpoint_lsn = wal_writer_.current_lsn();
-    
+
     // Flush all tables to disk and save version index
     {
         std::shared_lock lock(tables_mtx_);
         for (auto &tbl : tables_) {
-            if (auto s = tbl.flush_pending(); s.code != Status::kOk) return s;
+            if (auto s = tbl.flush_pending(); s.code != Status::kOk)
+                return s;
             tbl.sync();
             tbl.save_vindex(path_);
         }
     }
-    
+
     // Write checkpoint_lsn to checkpoint.meta
     std::vector<std::byte> meta_data(sizeof(Lsn));
     std::memcpy(meta_data.data(), &checkpoint_lsn, sizeof(Lsn));
@@ -500,29 +706,164 @@ auto Database::checkpoint() -> Status
     if (write_file(meta_path, meta_data) != Status::kOk) {
         return Status::kIoError;
     }
-    
+
     // Determine safe_lsn
     Lsn safe_lsn = checkpoint_lsn;
     Lsn oldest_active = txn_manager_->oldest_active_lsn();
     if (oldest_active != static_cast<Lsn>(-1) && oldest_active < safe_lsn) {
         safe_lsn = oldest_active;
     }
-    
+
     // Cleanup old segments
     wal_writer_.remove_segments_before(safe_lsn);
-    
+
     return Status::kOk;
 }
 
+auto Database::start_backup(const std::filesystem::path &dest_path) -> Status
+{
+    if (!std::filesystem::exists(dest_path)) {
+        std::error_code ec;
+        std::filesystem::create_directories(dest_path, ec);
+        if (ec)
+            return Status{Status::kIoError, "failed to create backup dir"};
+    }
+
+    // 1. Checkpoint to flush dirty pages
+    if (auto s = checkpoint(); s.code != Status::kOk)
+        return s;
+
+    // 2. Start backup mode
+    bool expected = false;
+    if (!backup_in_progress_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        return Status{Status::kAlreadyExists, "Backup already in progress"};
+    }
+    {
+        std::lock_guard lock(fpw_mtx_);
+        logged_pages_.clear();
+    }
+
+    // 3. Log backup start (using current LSN)
+    Lsn start_lsn = wal_writer_.current_lsn();
+
+    // 4. Fuzzy copy
+    try {
+        for (const auto &entry : std::filesystem::directory_iterator(path_)) {
+            if (entry.is_regular_file()) {
+                auto dest_file = dest_path / entry.path().filename();
+                std::filesystem::copy_file(entry.path(),
+                                           dest_file,
+                                           std::filesystem::copy_options::overwrite_existing);
+            }
+        }
+    }
+    catch (const std::exception &e) {
+        backup_in_progress_.store(false, std::memory_order_relaxed);
+        return Status{Status::kIoError, e.what()};
+    }
+
+    // 5. End backup
+    backup_in_progress_.store(false, std::memory_order_relaxed);
+
+    // Write backup.meta
+    std::vector<std::byte> meta_data(sizeof(Lsn));
+    std::memcpy(meta_data.data(), &start_lsn, sizeof(Lsn));
+    write_file(dest_path / "backup.meta", meta_data);
+
+    return Status::kOk;
+}
 void Database::checkpointer_thread_func()
 {
     while (!stop_checkpointer_) {
         std::unique_lock lock(checkpointer_mtx_);
-        if (checkpointer_cv_.wait_for(lock, std::chrono::seconds(5), [this] { return stop_checkpointer_.load(); })) {
+        checkpointer_cv_.wait_for(lock, std::chrono::seconds(5), [this] {
+            return stop_checkpointer_.load();
+        });
+        if (stop_checkpointer_)
             break;
+
+        auto st = checkpoint();
+        if (st != Status::kOk) {
+            // Log error
         }
-        checkpoint();
     }
+}
+
+void Database::auto_backup_thread_func()
+{
+    while (!stop_auto_backup_) {
+        std::unique_lock lock(auto_backup_mtx_);
+        uint32_t interval = backup_interval_seconds_ > 0 ? backup_interval_seconds_
+                                                         : 60; // default wake up every 60s
+        auto_backup_cv_.wait_for(lock, std::chrono::seconds(interval), [this] {
+            return stop_auto_backup_.load();
+        });
+        if (stop_auto_backup_)
+            break;
+
+        if (backup_interval_seconds_ > 0) {
+            uint64_t now_ms =
+                static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                          std::chrono::system_clock::now().time_since_epoch())
+                                          .count());
+            auto dest_path = path_.parent_path() / ("backup_" + std::to_string(now_ms));
+            auto st = start_backup(dest_path);
+            if (st == Status::kOk) {
+                cleanup_old_backups();
+            }
+        }
+    }
+}
+
+void Database::cleanup_old_backups()
+{
+    if (backup_retention_seconds_ == 0)
+        return;
+
+    uint64_t now_ms = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                std::chrono::system_clock::now().time_since_epoch())
+                                                .count());
+    uint64_t cutoff_ms = now_ms - (backup_retention_seconds_ * 1000ULL);
+
+    auto parent_dir = path_.parent_path();
+    for (const auto &entry : std::filesystem::directory_iterator(parent_dir)) {
+        if (entry.is_directory()) {
+            std::string name = entry.path().filename().string();
+            if (name.starts_with("backup_")) {
+                try {
+                    uint64_t ts = std::stoull(name.substr(7));
+                    if (ts < cutoff_ms) {
+                        std::error_code ec;
+                        std::filesystem::remove_all(entry.path(), ec);
+                    }
+                }
+                catch (...) {
+                    // Ignore non-timestamp backup directories
+                }
+            }
+        }
+    }
+}
+
+void Database::fpw_callback(TableId table_id,
+                            PageId page_id,
+                            int32_t file_id,
+                            const std::byte *data,
+                            size_t size)
+{
+    if (!backup_in_progress_.load(std::memory_order_relaxed))
+        return;
+
+    LoggedPageKey key{table_id, page_id, file_id};
+    {
+        std::lock_guard lock(fpw_mtx_);
+        if (logged_pages_.count(key))
+            return;
+        logged_pages_.insert(key);
+    }
+
+    auto _ = wal_writer_.append_full_page(table_id, page_id, file_id, data, size);
+    (void)_;
 }
 
 } // namespace rawdb

@@ -15,7 +15,8 @@ namespace rawdb
 
 class Database;
 
-enum class TransactionState {
+enum class TransactionState
+{
     kActive,
     kCommitted,
     kAborted
@@ -27,7 +28,7 @@ struct Transaction
     Timestamp read_ts;
     TransactionState state{TransactionState::kActive};
     Lsn start_lsn{0};
-    
+
     // Rows modified by this transaction. TableId -> vector<RowId>
     std::unordered_map<TableId, std::vector<RowId>> write_set;
 };
@@ -35,13 +36,13 @@ struct Transaction
 class TransactionManager
 {
 public:
-    explicit TransactionManager(TimestampAllocator& ts_alloc) : ts_alloc_(ts_alloc) {}
+    explicit TransactionManager(TimestampAllocator &ts_alloc) : ts_alloc_(ts_alloc) {}
 
-    auto begin(Database& db) -> std::shared_ptr<Transaction>;
-    
-    auto commit(std::shared_ptr<Transaction> txn, Database& db) -> Status;
-    
-    auto rollback(std::shared_ptr<Transaction> txn, Database& db) -> Status;
+    auto begin(Database &db) -> std::shared_ptr<Transaction>;
+
+    auto commit(std::shared_ptr<Transaction> txn, Database &db) -> Status;
+
+    auto rollback(std::shared_ptr<Transaction> txn, Database &db) -> Status;
 
     auto oldest_active_lsn() -> Lsn;
 
@@ -49,7 +50,7 @@ private:
     std::atomic<TxId> next_tx_id_{1};
     std::mutex mtx_;
     std::unordered_map<TxId, std::shared_ptr<Transaction>> active_txns_;
-    TimestampAllocator& ts_alloc_;
+    TimestampAllocator &ts_alloc_;
 };
 
 } // namespace rawdb

@@ -6,6 +6,6 @@ namespace rawdb::cli
 class Formatter
 {
 public:
-    static void print_table(const QueryResult& result);
+    static void print_table(const QueryResult &result);
 };
-}
+} // namespace rawdb::cli

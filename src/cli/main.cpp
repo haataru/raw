@@ -1,14 +1,16 @@
-#include "db/database.hpp"
-#include "cli/repl.hpp"
-#include <iostream>
 #include <filesystem>
+#include <iostream>
 
-int main(int argc, char** argv)
+#include "cli/repl.hpp"
+#include "db/database.hpp"
+
+int main(int argc, char **argv)
 {
     std::filesystem::path db_path;
     if (argc > 1) {
         db_path = argv[1];
-    } else {
+    }
+    else {
         db_path = "rawdb_data";
         std::cout << "No database path provided. Using default: " << db_path << "\n";
     }

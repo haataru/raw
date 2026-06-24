@@ -76,10 +76,12 @@ private:
     auto execute_create(const CreateStmt &stmt) -> StatusOr<QueryResult>;
     auto execute_create_index(const CreateIndexStmt &stmt) -> StatusOr<QueryResult>;
     auto execute_vacuum(const VacuumStmt &stmt) -> StatusOr<QueryResult>;
-    
+
     auto execute_begin(const BeginStmt &stmt) -> StatusOr<QueryResult>;
     auto execute_commit(const CommitStmt &stmt) -> StatusOr<QueryResult>;
     auto execute_rollback(const RollbackStmt &stmt) -> StatusOr<QueryResult>;
+    auto execute_backup(const BackupStmt &stmt) -> StatusOr<QueryResult>;
+    auto execute_config(const ConfigStmt &stmt) -> StatusOr<QueryResult>;
 
     Connection &conn_;
 };

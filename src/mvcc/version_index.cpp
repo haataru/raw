@@ -38,7 +38,9 @@ void VersionIndex::ensure_sorted() const
     }
 }
 
-auto VersionIndex::search(RowId row_id, Timestamp max_ts, TxId current_tx_id) const -> StatusOr<uint64_t>
+auto VersionIndex::search(RowId row_id,
+                          Timestamp max_ts,
+                          TxId current_tx_id) const -> StatusOr<uint64_t>
 {
     ensure_sorted();
 
@@ -56,8 +58,9 @@ auto VersionIndex::search(RowId row_id, Timestamp max_ts, TxId current_tx_id) co
     bool found = false;
 
     for (; it != entries_.end() && it->row_id == row_id; ++it) {
-        uint64_t raw_ts = reinterpret_cast<const std::atomic<uint64_t>&>(it->ts).load(std::memory_order_acquire);
-        
+        uint64_t raw_ts =
+            reinterpret_cast<const std::atomic<uint64_t> &>(it->ts).load(std::memory_order_acquire);
+
         if ((raw_ts & kTxIdFlag) == 0) {
             // Committed row
             if (raw_ts <= max_ts && raw_ts >= best_ts) {
@@ -65,7 +68,8 @@ auto VersionIndex::search(RowId row_id, Timestamp max_ts, TxId current_tx_id) co
                 best_offset = it->offset;
                 found = true;
             }
-        } else {
+        }
+        else {
             // Uncommitted row (active transaction)
             TxId row_txid = raw_ts & ~kTxIdFlag;
             if (row_txid == current_tx_id && current_tx_id != kInvalidTxId) {
@@ -74,11 +78,12 @@ auto VersionIndex::search(RowId row_id, Timestamp max_ts, TxId current_tx_id) co
         }
     }
 
-    if (found) return best_offset;
+    if (found)
+        return best_offset;
     return std::unexpected(Status::kNotFound);
 }
 
-void VersionIndex::commit_rows(const std::vector<RowId>& row_ids, TxId tx_id, Timestamp commit_ts)
+void VersionIndex::commit_rows(const std::vector<RowId> &row_ids, TxId tx_id, Timestamp commit_ts)
 {
     ensure_sorted();
     uint64_t target_ts = tx_id | kTxIdFlag;
@@ -88,9 +93,9 @@ void VersionIndex::commit_rows(const std::vector<RowId>& row_ids, TxId tx_id, Ti
                                    entries_.end(),
                                    rid,
                                    [](const IndexEntry &e, RowId id) { return e.row_id < id; });
-                                   
+
         for (; it != entries_.end() && it->row_id == rid; ++it) {
-            auto& atomic_ts = reinterpret_cast<std::atomic<uint64_t>&>(it->ts);
+            auto &atomic_ts = reinterpret_cast<std::atomic<uint64_t> &>(it->ts);
             uint64_t raw_ts = atomic_ts.load(std::memory_order_acquire);
             if (raw_ts == target_ts) {
                 atomic_ts.store(commit_ts, std::memory_order_release);

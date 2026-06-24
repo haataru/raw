@@ -61,6 +61,10 @@ enum class TokenType
     kAnd,
     kOr,
     kIn,
+    kBackup,
+    kTo,
+    kInterval,
+    kRetention,
     kEnd
 };
 
@@ -125,7 +129,12 @@ struct Predicate
 
 struct ExprNode
 {
-    enum class Type { kPredicate, kAnd, kOr };
+    enum class Type
+    {
+        kPredicate,
+        kAnd,
+        kOr
+    };
     Type type;
     Predicate pred;
     std::unique_ptr<ExprNode> left;
@@ -136,6 +145,11 @@ struct InsertStmt
 {
     std::string table_name;
     std::vector<std::vector<Value>> rows;
+};
+
+struct BackupStmt
+{
+    std::string path;
 };
 
 struct OrderBy
@@ -201,12 +215,31 @@ struct VacuumStmt
     std::string table_name;
 };
 
-struct BeginStmt {};
-struct CommitStmt {};
-struct RollbackStmt {};
+struct BeginStmt
+{};
+struct CommitStmt
+{};
+struct RollbackStmt
+{};
 
-using Statement =
-    std::variant<InsertStmt, SelectStmt, DeleteStmt, UpdateStmt, CreateStmt, CreateIndexStmt, VacuumStmt, BeginStmt, CommitStmt, RollbackStmt>;
+struct ConfigStmt
+{
+    std::string key;
+    uint32_t value;
+};
+
+using Statement = std::variant<InsertStmt,
+                               SelectStmt,
+                               DeleteStmt,
+                               CreateStmt,
+                               CreateIndexStmt,
+                               VacuumStmt,
+                               UpdateStmt,
+                               BeginStmt,
+                               CommitStmt,
+                               RollbackStmt,
+                               BackupStmt,
+                               ConfigStmt>;
 
 // ──────────────────────────────────────────────
 // Parser
@@ -239,6 +272,8 @@ private:
     auto parse_begin() -> StatusOr<BeginStmt>;
     auto parse_commit() -> StatusOr<CommitStmt>;
     auto parse_rollback() -> StatusOr<RollbackStmt>;
+    auto parse_backup() -> StatusOr<BackupStmt>;
+    auto parse_set() -> StatusOr<ConfigStmt>;
 
     auto parse_expr() -> StatusOr<std::unique_ptr<ExprNode>>;
     auto parse_expr_and() -> StatusOr<std::unique_ptr<ExprNode>>;

@@ -3,8 +3,6 @@
 namespace rawdb
 {
 
-
-
 auto Executor::execute(std::string_view sql) -> StatusOr<QueryResult>
 {
     Parser parser;
@@ -49,6 +47,12 @@ auto Executor::execute(const Statement &stmt) -> StatusOr<QueryResult>
             else if constexpr (std::is_same_v<T, RollbackStmt>) {
                 return execute_rollback(s);
             }
+            else if constexpr (std::is_same_v<T, BackupStmt>) {
+                return execute_backup(s);
+            }
+            else if constexpr (std::is_same_v<T, ConfigStmt>) {
+                return execute_config(s);
+            }
             else {
                 return std::unexpected(Status::kInvalidArgument);
             }
@@ -59,7 +63,8 @@ auto Executor::execute(const Statement &stmt) -> StatusOr<QueryResult>
 auto Executor::execute_begin(const BeginStmt &) -> StatusOr<QueryResult>
 {
     auto st = conn_.begin();
-    if (st != Status::kOk) return std::unexpected(st);
+    if (st != Status::kOk)
+        return std::unexpected(st);
     QueryResult r;
     return r;
 }
@@ -67,7 +72,8 @@ auto Executor::execute_begin(const BeginStmt &) -> StatusOr<QueryResult>
 auto Executor::execute_commit(const CommitStmt &) -> StatusOr<QueryResult>
 {
     auto st = conn_.commit();
-    if (st != Status::kOk) return std::unexpected(st);
+    if (st != Status::kOk)
+        return std::unexpected(st);
     QueryResult r;
     return r;
 }
@@ -75,9 +81,31 @@ auto Executor::execute_commit(const CommitStmt &) -> StatusOr<QueryResult>
 auto Executor::execute_rollback(const RollbackStmt &) -> StatusOr<QueryResult>
 {
     auto st = conn_.rollback();
-    if (st != Status::kOk) return std::unexpected(st);
-    QueryResult r;
-    return r;
+    if (st != Status::kOk)
+        return std::unexpected(st);
+    return QueryResult{{"status"}, {ColumnType::kVarChar}, {{"OK"}}};
+}
+
+auto Executor::execute_backup(const BackupStmt &stmt) -> StatusOr<QueryResult>
+{
+    if (auto s = conn_.db().start_backup(stmt.path); s.code != Status::kOk) {
+        return std::unexpected(s);
+    }
+    return QueryResult{{"status"}, {ColumnType::kVarChar}, {{"BACKUP SUCCESS"}}};
+}
+
+auto Executor::execute_config(const ConfigStmt &stmt) -> StatusOr<QueryResult>
+{
+    if (stmt.key == "backup_interval") {
+        conn_.db().set_backup_interval(stmt.value);
+    }
+    else if (stmt.key == "backup_retention") {
+        conn_.db().set_backup_retention(stmt.value);
+    }
+    else {
+        return std::unexpected(Status{Status::kInvalidArgument, "Unknown config key"});
+    }
+    return QueryResult{{"status"}, {ColumnType::kVarChar}, {{"CONFIG UPDATED"}}};
 }
 
 } // namespace rawdb

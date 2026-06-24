@@ -8,6 +8,8 @@ out/
 *.idx
 *.vindex
 *.schema
+*_backup/
+*_backup_*
 
 # IDE
 .idea/

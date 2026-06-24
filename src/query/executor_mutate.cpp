@@ -25,7 +25,8 @@ auto Executor::execute_insert(const InsertStmt &stmt) -> StatusOr<QueryResult>
     RowId start_rid = tbl.row_count();
     bool has_indexes = tbl.has_indexes();
 
-    std::vector<std::vector<ColumnData>> batch_cols(stmt.rows.size(), std::vector<ColumnData>(schema.column_count()));
+    std::vector<std::vector<ColumnData>> batch_cols(stmt.rows.size(),
+                                                    std::vector<ColumnData>(schema.column_count()));
     std::vector<std::byte> arena;
     // Guess 16 bytes per column per row
     arena.reserve(stmt.rows.size() * schema.column_count() * 16);
@@ -47,7 +48,7 @@ auto Executor::execute_insert(const InsertStmt &stmt) -> StatusOr<QueryResult>
                     if (std::holds_alternative<int64_t>(val.data)) {
                         v = static_cast<int32_t>(std::get<int64_t>(val.data));
                     }
-                    auto* p = reinterpret_cast<std::byte*>(&v);
+                    auto *p = reinterpret_cast<std::byte *>(&v);
                     arena.insert(arena.end(), p, p + sizeof(v));
                     break;
                 }
@@ -57,7 +58,7 @@ auto Executor::execute_insert(const InsertStmt &stmt) -> StatusOr<QueryResult>
                     if (std::holds_alternative<int64_t>(val.data)) {
                         v = std::get<int64_t>(val.data);
                     }
-                    auto* p = reinterpret_cast<std::byte*>(&v);
+                    auto *p = reinterpret_cast<std::byte *>(&v);
                     arena.insert(arena.end(), p, p + sizeof(v));
                     break;
                 }
@@ -69,7 +70,7 @@ auto Executor::execute_insert(const InsertStmt &stmt) -> StatusOr<QueryResult>
                     else if (std::holds_alternative<int64_t>(val.data)) {
                         v = static_cast<double>(std::get<int64_t>(val.data));
                     }
-                    auto* p = reinterpret_cast<std::byte*>(&v);
+                    auto *p = reinterpret_cast<std::byte *>(&v);
                     arena.insert(arena.end(), p, p + sizeof(v));
                     break;
                 }
@@ -84,9 +85,9 @@ auto Executor::execute_insert(const InsertStmt &stmt) -> StatusOr<QueryResult>
                         s = tmp;
                     }
                     uint32_t end = static_cast<uint32_t>(s.size());
-                    auto* p_end = reinterpret_cast<std::byte*>(&end);
+                    auto *p_end = reinterpret_cast<std::byte *>(&end);
                     arena.insert(arena.end(), p_end, p_end + sizeof(uint32_t));
-                    auto* p_str = reinterpret_cast<const std::byte*>(s.data());
+                    auto *p_str = reinterpret_cast<const std::byte *>(s.data());
                     arena.insert(arena.end(), p_str, p_str + s.size());
                     break;
                 }
@@ -95,17 +96,15 @@ auto Executor::execute_insert(const InsertStmt &stmt) -> StatusOr<QueryResult>
                     if (std::holds_alternative<int64_t>(val.data)) {
                         v = std::get<int64_t>(val.data) != 0;
                     }
-                    auto* p = reinterpret_cast<std::byte*>(&v);
+                    auto *p = reinterpret_cast<std::byte *>(&v);
                     arena.insert(arena.end(), p, p + sizeof(v));
                     break;
                 }
             }
             batch_cols[ri][ci].type = col_type;
             batch_cols[ri][ci].size = arena.size() - start_off;
-            // Note: pointer into arena is dangerous if arena reallocates!
-            // We reserved enough, but if it reallocates, pointers break.
-            // Actually, we must resolve pointers AFTER the loop!
-            batch_cols[ri][ci].data = reinterpret_cast<const std::byte*>(start_off);
+            // Store offset temporarily in data
+            batch_cols[ri][ci].data = reinterpret_cast<const std::byte *>(start_off);
             batch_cols[ri][ci].nulls = nullptr;
         }
     }
@@ -131,20 +130,20 @@ auto Executor::execute_insert(const InsertStmt &stmt) -> StatusOr<QueryResult>
             table_ref.for_each_index([&](auto &idx) {
                 if (idx_err != Status::kOk)
                     return;
-                
+
                 auto col_type = schema.columns[idx.column_idx];
                 const std::byte *key;
                 size_t key_len;
-                
-                const auto& col_data = batch_cols[i][idx.column_idx];
-                
+
+                const auto &col_data = batch_cols[i][idx.column_idx];
+
                 if (col_type == ColumnType::kVarChar) {
                     auto total = col_data.size;
                     key_len = (total > sizeof(uint32_t)) ? total - sizeof(uint32_t) : 0;
-                    key = static_cast<const std::byte*>(col_data.data) + sizeof(uint32_t);
+                    key = static_cast<const std::byte *>(col_data.data) + sizeof(uint32_t);
                 }
                 else {
-                    key = static_cast<const std::byte*>(col_data.data);
+                    key = static_cast<const std::byte *>(col_data.data);
                     key_len = col_data.size;
                 }
                 idx_err = idx.tree.insert(key, key_len, rid);
@@ -226,12 +225,16 @@ auto Executor::execute_delete(const DeleteStmt &stmt) -> StatusOr<QueryResult>
     return result;
 }
 
-static auto bytes_to_value(const ColumnData &col, ColumnType type, size_t row_idx, size_t total_rows) -> Value
+static auto bytes_to_value(const ColumnData &col,
+                           ColumnType type,
+                           size_t row_idx,
+                           size_t total_rows) -> Value
 {
     Value v;
     switch (type) {
         case ColumnType::kInt32:
-            v.data = static_cast<int64_t>(static_cast<const int32_t *>(static_cast<const void *>(col.data))[row_idx]);
+            v.data = static_cast<int64_t>(
+                static_cast<const int32_t *>(static_cast<const void *>(col.data))[row_idx]);
             break;
         case ColumnType::kTimestamp:
         case ColumnType::kInt64:
@@ -241,7 +244,8 @@ static auto bytes_to_value(const ColumnData &col, ColumnType type, size_t row_id
             v.data = static_cast<const double *>(static_cast<const void *>(col.data))[row_idx];
             break;
         case ColumnType::kBool:
-            v.data = static_cast<int64_t>(static_cast<const bool *>(static_cast<const void *>(col.data))[row_idx]);
+            v.data = static_cast<int64_t>(
+                static_cast<const bool *>(static_cast<const void *>(col.data))[row_idx]);
             break;
         case ColumnType::kVarChar: {
             auto *raw = static_cast<const std::byte *>(col.data);
@@ -253,7 +257,8 @@ static auto bytes_to_value(const ColumnData &col, ColumnType type, size_t row_id
             auto *offsets = reinterpret_cast<const uint32_t *>(static_cast<const void *>(raw));
             uint32_t start = (row_idx == 0) ? 0 : offsets[row_idx - 1];
             uint32_t end = offsets[row_idx];
-            v.data = std::string(reinterpret_cast<const char *>(raw + off_bytes + start), end - start);
+            v.data =
+                std::string(reinterpret_cast<const char *>(raw + off_bytes + start), end - start);
             break;
         }
     }
@@ -309,7 +314,8 @@ auto Executor::execute_update(const UpdateStmt &stmt) -> StatusOr<QueryResult>
                 target_rows.push_back(static_cast<RowId>(row_idx));
             }
         }
-    } else {
+    }
+    else {
         target_rows.reserve(row_count);
         for (size_t i = 0; i < row_count; ++i) {
             auto r = tbl.search_version_index(static_cast<RowId>(i), read_ts);
@@ -332,8 +338,10 @@ auto Executor::execute_update(const UpdateStmt &stmt) -> StatusOr<QueryResult>
             for (size_t ci = 0; ci < schema.column_count(); ++ci) {
                 if (ci == target_col_idx) {
                     row_vals.push_back(stmt.new_value);
-                } else {
-                    row_vals.push_back(bytes_to_value(scan->columns[ci], schema.columns[ci], rid, row_count));
+                }
+                else {
+                    row_vals.push_back(
+                        bytes_to_value(scan->columns[ci], schema.columns[ci], rid, row_count));
                 }
             }
             insert_stmt.rows.push_back(std::move(row_vals));

@@ -83,6 +83,14 @@ static auto is_keyword(std::string_view s) -> TokenType
         return TokenType::kOr;
     if (s == "in")
         return TokenType::kIn;
+    if (s == "backup")
+        return TokenType::kBackup;
+    if (s == "to")
+        return TokenType::kTo;
+    if (s == "interval")
+        return TokenType::kInterval;
+    if (s == "retention")
+        return TokenType::kRetention;
     return TokenType::kIdentifier;
 }
 
@@ -209,7 +217,8 @@ void Parser::next_token()
 auto Parser::consume(TokenType expected) -> Status
 {
     if (current_.type != expected) {
-        std::cout << "Consume failed! Expected: " << (int)expected << ", got: " << (int)current_.type << " ('" << current_.text << "')" << std::endl;
+        std::cout << "Consume failed! Expected: " << (int)expected
+                  << ", got: " << (int)current_.type << " ('" << current_.text << "')" << std::endl;
         return Status::kInvalidArgument;
     }
     next_token();
@@ -266,6 +275,10 @@ auto Parser::parse_statement() -> StatusOr<Statement>
             return parse_commit();
         case TokenType::kRollbackTxn:
             return parse_rollback();
+        case TokenType::kBackup:
+            return parse_backup();
+        case TokenType::kSet:
+            return parse_set();
         default:
             return std::unexpected(Status::kInvalidArgument);
     }
@@ -282,7 +295,8 @@ auto Parser::parse_insert() -> StatusOr<InsertStmt>
         return std::unexpected(st);
 
     if (peek() != TokenType::kIdentifier) {
-        std::cout << "Error at line: " << __LINE__ << " peek=" << (int)peek() << " text=" << current_.text << std::endl;
+        std::cout << "Error at line: " << __LINE__ << " peek=" << (int)peek()
+                  << " text=" << current_.text << std::endl;
         return std::unexpected(Status::kInvalidArgument);
     }
     InsertStmt stmt;
@@ -382,7 +396,8 @@ auto Parser::parse_select() -> StatusOr<SelectStmt>
         return std::unexpected(st);
 
     if (peek() != TokenType::kIdentifier) {
-        std::cout << "Error at line: " << __LINE__ << " peek=" << (int)peek() << " text=" << current_.text << std::endl;
+        std::cout << "Error at line: " << __LINE__ << " peek=" << (int)peek()
+                  << " text=" << current_.text << std::endl;
         return std::unexpected(Status::kInvalidArgument);
     }
     stmt.table_name = current_.text;
@@ -390,22 +405,33 @@ auto Parser::parse_select() -> StatusOr<SelectStmt>
 
     if (peek() == TokenType::kJoin) {
         next_token();
-        if (peek() != TokenType::kIdentifier) { std::cout << "Error at line: " << __LINE__ << std::endl; return std::unexpected(Status::kInvalidArgument); }
+        if (peek() != TokenType::kIdentifier) {
+            std::cout << "Error at line: " << __LINE__ << std::endl;
+            return std::unexpected(Status::kInvalidArgument);
+        }
         stmt.join_clause.table_name = current_.text;
         next_token();
-        
-        if (consume(TokenType::kOn) != Status::kOk) { std::cout << "Error at line: " << __LINE__ << std::endl; return std::unexpected(Status::kInvalidArgument); }
-        
+
+        if (consume(TokenType::kOn) != Status::kOk) {
+            std::cout << "Error at line: " << __LINE__ << std::endl;
+            return std::unexpected(Status::kInvalidArgument);
+        }
+
         auto left_col = parse_column_ref();
-        if (!left_col) return std::unexpected(left_col.error());
+        if (!left_col)
+            return std::unexpected(left_col.error());
         stmt.join_clause.left_col = std::move(*left_col);
-        
-        if (consume(TokenType::kEq) != Status::kOk) { std::cout << "Error at line: " << __LINE__ << std::endl; return std::unexpected(Status::kInvalidArgument); }
-        
+
+        if (consume(TokenType::kEq) != Status::kOk) {
+            std::cout << "Error at line: " << __LINE__ << std::endl;
+            return std::unexpected(Status::kInvalidArgument);
+        }
+
         auto right_col = parse_column_ref();
-        if (!right_col) return std::unexpected(right_col.error());
+        if (!right_col)
+            return std::unexpected(right_col.error());
         stmt.join_clause.right_col = std::move(*right_col);
-        
+
         stmt.has_join = true;
     }
 
@@ -425,7 +451,7 @@ auto Parser::parse_select() -> StatusOr<SelectStmt>
         st2 = consume(TokenType::kBy);
         if (st2 != Status::kOk)
             return std::unexpected(st2);
-        
+
         do {
             auto col = parse_column_ref();
             if (!col)
@@ -459,14 +485,20 @@ auto Parser::parse_select() -> StatusOr<SelectStmt>
         auto st2 = consume(TokenType::kLimit);
         if (st2 != Status::kOk)
             return std::unexpected(st2);
-        if (peek() != TokenType::kNumber) { std::cout << "Error at line: " << __LINE__ << std::endl; return std::unexpected(Status::kInvalidArgument); }
+        if (peek() != TokenType::kNumber) {
+            std::cout << "Error at line: " << __LINE__ << std::endl;
+            return std::unexpected(Status::kInvalidArgument);
+        }
         stmt.limit_count = std::stoull(current_.text);
         stmt.has_limit = true;
         next_token();
-        
+
         if (peek() == TokenType::kOffset) {
             next_token();
-            if (peek() != TokenType::kNumber) { std::cout << "Error at line: " << __LINE__ << std::endl; return std::unexpected(Status::kInvalidArgument); }
+            if (peek() != TokenType::kNumber) {
+                std::cout << "Error at line: " << __LINE__ << std::endl;
+                return std::unexpected(Status::kInvalidArgument);
+            }
             stmt.offset_count = std::stoull(current_.text);
             stmt.has_offset = true;
             next_token();
@@ -487,7 +519,8 @@ auto Parser::parse_delete() -> StatusOr<DeleteStmt>
         return std::unexpected(st);
 
     if (peek() != TokenType::kIdentifier) {
-        std::cout << "Error at line: " << __LINE__ << " peek=" << (int)peek() << " text=" << current_.text << std::endl;
+        std::cout << "Error at line: " << __LINE__ << " peek=" << (int)peek()
+                  << " text=" << current_.text << std::endl;
         return std::unexpected(Status::kInvalidArgument);
     }
     DeleteStmt stmt;
@@ -513,7 +546,8 @@ auto Parser::parse_update() -> StatusOr<UpdateStmt>
         return std::unexpected(st);
 
     if (peek() != TokenType::kIdentifier) {
-        std::cout << "Error at line: " << __LINE__ << " peek=" << (int)peek() << " text=" << current_.text << std::endl;
+        std::cout << "Error at line: " << __LINE__ << " peek=" << (int)peek()
+                  << " text=" << current_.text << std::endl;
         return std::unexpected(Status::kInvalidArgument);
     }
     UpdateStmt stmt;
@@ -525,7 +559,8 @@ auto Parser::parse_update() -> StatusOr<UpdateStmt>
         return std::unexpected(st);
 
     if (peek() != TokenType::kIdentifier) {
-        std::cout << "Error at line: " << __LINE__ << " peek=" << (int)peek() << " text=" << current_.text << std::endl;
+        std::cout << "Error at line: " << __LINE__ << " peek=" << (int)peek()
+                  << " text=" << current_.text << std::endl;
         return std::unexpected(Status::kInvalidArgument);
     }
     stmt.column_name = current_.text;
@@ -590,15 +625,19 @@ auto Parser::parse_predicate() -> StatusOr<Predicate>
 
     if (pred.op == CmpOp::kIn) {
         auto st = consume(TokenType::kLParen);
-        if (st != Status::kOk) return std::unexpected(st);
+        if (st != Status::kOk)
+            return std::unexpected(st);
         do {
             auto val = parse_value();
-            if (!val) return std::unexpected(val.error());
+            if (!val)
+                return std::unexpected(val.error());
             pred.in_values.push_back(std::move(*val));
         } while (peek() == TokenType::kComma && (consume(TokenType::kComma), true));
         st = consume(TokenType::kRParen);
-        if (st != Status::kOk) return std::unexpected(st);
-    } else {
+        if (st != Status::kOk)
+            return std::unexpected(st);
+    }
+    else {
         auto val = parse_value();
         if (!val)
             return std::unexpected(val.error());
@@ -611,14 +650,16 @@ auto Parser::parse_predicate() -> StatusOr<Predicate>
 auto Parser::parse_expr() -> StatusOr<std::unique_ptr<ExprNode>>
 {
     auto left = parse_expr_and();
-    if (!left) return left;
+    if (!left)
+        return left;
 
     auto node = std::move(*left);
 
     while (peek() == TokenType::kOr) {
         next_token();
         auto right = parse_expr_and();
-        if (!right) return right;
+        if (!right)
+            return right;
 
         auto parent = std::make_unique<ExprNode>();
         parent->type = ExprNode::Type::kOr;
@@ -632,14 +673,16 @@ auto Parser::parse_expr() -> StatusOr<std::unique_ptr<ExprNode>>
 auto Parser::parse_expr_and() -> StatusOr<std::unique_ptr<ExprNode>>
 {
     auto left = parse_expr_primary();
-    if (!left) return left;
+    if (!left)
+        return left;
 
     auto node = std::move(*left);
 
     while (peek() == TokenType::kAnd) {
         next_token();
         auto right = parse_expr_primary();
-        if (!right) return right;
+        if (!right)
+            return right;
 
         auto parent = std::make_unique<ExprNode>();
         parent->type = ExprNode::Type::kAnd;
@@ -655,7 +698,8 @@ auto Parser::parse_expr_primary() -> StatusOr<std::unique_ptr<ExprNode>>
     if (peek() == TokenType::kLParen) {
         next_token();
         auto expr = parse_expr();
-        if (!expr) return expr;
+        if (!expr)
+            return expr;
         if (consume(TokenType::kRParen) != Status::kOk) {
             return std::unexpected(Status::kInvalidArgument);
         }
@@ -663,7 +707,8 @@ auto Parser::parse_expr_primary() -> StatusOr<std::unique_ptr<ExprNode>>
     }
 
     auto pred = parse_predicate();
-    if (!pred) return std::unexpected(pred.error());
+    if (!pred)
+        return std::unexpected(pred.error());
 
     auto node = std::make_unique<ExprNode>();
     node->type = ExprNode::Type::kPredicate;
@@ -674,46 +719,57 @@ auto Parser::parse_expr_primary() -> StatusOr<std::unique_ptr<ExprNode>>
 auto Parser::parse_column_ref() -> StatusOr<ColumnRef>
 {
     ColumnRef ref;
-    
+
     TokenType t = peek();
-    if (t == TokenType::kCount || t == TokenType::kSum || t == TokenType::kAvg || 
+    if (t == TokenType::kCount || t == TokenType::kSum || t == TokenType::kAvg ||
         t == TokenType::kMin || t == TokenType::kMax) {
-        if (t == TokenType::kCount) ref.func = AggFunc::kCount;
-        else if (t == TokenType::kSum) ref.func = AggFunc::kSum;
-        else if (t == TokenType::kAvg) ref.func = AggFunc::kAvg;
-        else if (t == TokenType::kMin) ref.func = AggFunc::kMin;
-        else if (t == TokenType::kMax) ref.func = AggFunc::kMax;
-        
+        if (t == TokenType::kCount)
+            ref.func = AggFunc::kCount;
+        else if (t == TokenType::kSum)
+            ref.func = AggFunc::kSum;
+        else if (t == TokenType::kAvg)
+            ref.func = AggFunc::kAvg;
+        else if (t == TokenType::kMin)
+            ref.func = AggFunc::kMin;
+        else if (t == TokenType::kMax)
+            ref.func = AggFunc::kMax;
+
         next_token();
         auto st = consume(TokenType::kLParen);
-        if (st != Status::kOk) return std::unexpected(st);
-        
+        if (st != Status::kOk)
+            return std::unexpected(st);
+
         if (peek() == TokenType::kStar) {
             ref.is_star = true;
             ref.name = "*";
             next_token();
-        } else if (peek() == TokenType::kIdentifier) {
+        }
+        else if (peek() == TokenType::kIdentifier) {
             ref.name = current_.text;
             next_token();
             if (peek() == TokenType::kDot) {
                 ref.table = ref.name;
                 next_token();
-                if (peek() != TokenType::kIdentifier) return std::unexpected(Status::kInvalidArgument);
+                if (peek() != TokenType::kIdentifier)
+                    return std::unexpected(Status::kInvalidArgument);
                 ref.name = current_.text;
                 next_token();
             }
-        } else {
+        }
+        else {
             return std::unexpected(Status::kInvalidArgument);
         }
-        
+
         st = consume(TokenType::kRParen);
-        if (st != Status::kOk) return std::unexpected(st);
-        
+        if (st != Status::kOk)
+            return std::unexpected(st);
+
         return ref;
     }
 
     if (peek() != TokenType::kIdentifier) {
-        std::cout << "Error at line: " << __LINE__ << " peek=" << (int)peek() << " text=" << current_.text << std::endl;
+        std::cout << "Error at line: " << __LINE__ << " peek=" << (int)peek()
+                  << " text=" << current_.text << std::endl;
         return std::unexpected(Status::kInvalidArgument);
     }
     ref.name = current_.text;
@@ -723,7 +779,8 @@ auto Parser::parse_column_ref() -> StatusOr<ColumnRef>
         ref.table = ref.name;
         next_token();
         if (peek() != TokenType::kIdentifier) {
-            std::cout << "Error at line: " << __LINE__ << " peek=" << (int)peek() << " text=" << current_.text << std::endl;
+            std::cout << "Error at line: " << __LINE__ << " peek=" << (int)peek()
+                      << " text=" << current_.text << std::endl;
             return std::unexpected(Status::kInvalidArgument);
         }
         ref.name = current_.text;
@@ -750,7 +807,8 @@ auto Parser::parse_create() -> StatusOr<Statement>
         return std::unexpected(st);
 
     if (peek() != TokenType::kIdentifier) {
-        std::cout << "Error at line: " << __LINE__ << " peek=" << (int)peek() << " text=" << current_.text << std::endl;
+        std::cout << "Error at line: " << __LINE__ << " peek=" << (int)peek()
+                  << " text=" << current_.text << std::endl;
         return std::unexpected(Status::kInvalidArgument);
     }
     CreateStmt stmt;
@@ -813,7 +871,8 @@ auto Parser::parse_create_index() -> StatusOr<CreateIndexStmt>
         return std::unexpected(st);
 
     if (peek() != TokenType::kIdentifier) {
-        std::cout << "Error at line: " << __LINE__ << " peek=" << (int)peek() << " text=" << current_.text << std::endl;
+        std::cout << "Error at line: " << __LINE__ << " peek=" << (int)peek()
+                  << " text=" << current_.text << std::endl;
         return std::unexpected(Status::kInvalidArgument);
     }
     CreateIndexStmt stmt;
@@ -825,7 +884,8 @@ auto Parser::parse_create_index() -> StatusOr<CreateIndexStmt>
         return std::unexpected(st);
 
     if (peek() != TokenType::kIdentifier) {
-        std::cout << "Error at line: " << __LINE__ << " peek=" << (int)peek() << " text=" << current_.text << std::endl;
+        std::cout << "Error at line: " << __LINE__ << " peek=" << (int)peek()
+                  << " text=" << current_.text << std::endl;
         return std::unexpected(Status::kInvalidArgument);
     }
     stmt.table_name = current_.text;
@@ -836,7 +896,8 @@ auto Parser::parse_create_index() -> StatusOr<CreateIndexStmt>
         return std::unexpected(st);
 
     if (peek() != TokenType::kIdentifier) {
-        std::cout << "Error at line: " << __LINE__ << " peek=" << (int)peek() << " text=" << current_.text << std::endl;
+        std::cout << "Error at line: " << __LINE__ << " peek=" << (int)peek()
+                  << " text=" << current_.text << std::endl;
         return std::unexpected(Status::kInvalidArgument);
     }
     stmt.column_name = current_.text;
@@ -856,7 +917,8 @@ auto Parser::parse_vacuum() -> StatusOr<VacuumStmt>
         return std::unexpected(st);
 
     if (peek() != TokenType::kIdentifier) {
-        std::cout << "Error at line: " << __LINE__ << " peek=" << (int)peek() << " text=" << current_.text << std::endl;
+        std::cout << "Error at line: " << __LINE__ << " peek=" << (int)peek()
+                  << " text=" << current_.text << std::endl;
         return std::unexpected(Status::kInvalidArgument);
     }
     VacuumStmt stmt;
@@ -869,22 +931,91 @@ auto Parser::parse_vacuum() -> StatusOr<VacuumStmt>
 auto Parser::parse_begin() -> StatusOr<BeginStmt>
 {
     auto st = consume(TokenType::kBeginTxn);
-    if (st != Status::kOk) return std::unexpected(st);
+    if (st != Status::kOk)
+        return std::unexpected(st);
     return BeginStmt{};
 }
 
 auto Parser::parse_commit() -> StatusOr<CommitStmt>
 {
     auto st = consume(TokenType::kCommitTxn);
-    if (st != Status::kOk) return std::unexpected(st);
+    if (st != Status::kOk)
+        return std::unexpected(st);
     return CommitStmt{};
 }
 
 auto Parser::parse_rollback() -> StatusOr<RollbackStmt>
 {
     auto st = consume(TokenType::kRollbackTxn);
-    if (st != Status::kOk) return std::unexpected(st);
+    if (st != Status::kOk)
+        return std::unexpected(st);
     return RollbackStmt{};
+}
+
+auto Parser::parse_backup() -> StatusOr<BackupStmt>
+{
+    auto st = consume(TokenType::kBackup);
+    if (st != Status::kOk)
+        return std::unexpected(st);
+    st = consume(TokenType::kTo);
+    if (st != Status::kOk)
+        return std::unexpected(st);
+    if (peek() != TokenType::kString)
+        return std::unexpected(Status::kInvalidArgument);
+    BackupStmt stmt;
+    stmt.path = current_.text;
+    next_token();
+    return stmt;
+}
+
+auto Parser::parse_set() -> StatusOr<ConfigStmt>
+{
+    auto st = consume(TokenType::kSet);
+    if (st != Status::kOk)
+        return std::unexpected(st);
+
+    st = consume(TokenType::kBackup);
+    if (st != Status::kOk)
+        return std::unexpected(st);
+
+    ConfigStmt stmt;
+
+    if (peek() == TokenType::kInterval) {
+        st = consume(TokenType::kInterval);
+        if (st != Status::kOk)
+            return std::unexpected(st);
+        stmt.key = "backup_interval";
+    }
+    else if (peek() == TokenType::kRetention) {
+        st = consume(TokenType::kRetention);
+        if (st != Status::kOk)
+            return std::unexpected(st);
+        stmt.key = "backup_retention";
+    }
+    else {
+        return std::unexpected(
+            Status{Status::kInvalidArgument, "Expected INTERVAL or RETENTION after SET BACKUP"});
+    }
+
+    st = consume(TokenType::kTo);
+    if (st != Status::kOk)
+        return std::unexpected(st);
+
+    if (peek() != TokenType::kNumber) {
+        return std::unexpected(Status{Status::kInvalidArgument, "Expected a number"});
+    }
+    std::string val_str = current_.text;
+    next_token();
+
+    try {
+        stmt.value = static_cast<uint32_t>(std::stoul(val_str));
+    }
+    catch (...) {
+        return std::unexpected(
+            Status{Status::kInvalidArgument, "Invalid number for SET BACKUP config"});
+    }
+
+    return stmt;
 }
 
 } // namespace rawdb

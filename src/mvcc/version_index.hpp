@@ -58,9 +58,11 @@ public:
 
     void ensure_sorted() const;
 
-    [[nodiscard]] auto search(RowId row_id, Timestamp max_ts, TxId current_tx_id = kInvalidTxId) const -> StatusOr<uint64_t>;
+    [[nodiscard]] auto search(RowId row_id,
+                              Timestamp max_ts,
+                              TxId current_tx_id = kInvalidTxId) const -> StatusOr<uint64_t>;
 
-    void commit_rows(const std::vector<RowId>& row_ids, TxId tx_id, Timestamp commit_ts);
+    void commit_rows(const std::vector<RowId> &row_ids, TxId tx_id, Timestamp commit_ts);
 
     [[nodiscard]] auto size() const -> size_t { return entries_.size(); }
 

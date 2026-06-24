@@ -60,12 +60,85 @@ auto Table::read_rows(const std::vector<RowId> &row_ids,
             std::upper_bound(pages_.begin(), pages_.end(), rid, [](RowId r, const RowRange &rg) {
                 return r < rg.start;
             });
-        if (it != pages_.begin())
+        if (it != pages_.begin()) {
             --it;
-        if (rid < it->start || rid >= it->start + static_cast<RowId>(it->count)) {
-            continue;
+        }
+        else {
+            it = pages_.end();
         }
 
+        if (it == pages_.end() || rid < it->start || rid >= it->start + it->count) {
+            // Not in flushed pages, check pending batches
+            auto read_from_batch = [&](PendingBatch *b) {
+                std::unique_lock b_lock(b->mtx);
+                if (rid < b->start_rid || rid >= b->start_rid + b->row_count)
+                    return false;
+
+                size_t local = rid - b->start_rid;
+                for (size_t ci : col_indices) {
+                    ColumnType ct = schema_.columns[ci];
+                    if (ct == ColumnType::kVarChar) {
+                        uint32_t len = 0;
+                        size_t pos = 0;
+                        for (size_t r = 0; r <= local; ++r) {
+                            std::memcpy(&len, b->col_data[ci].data() + pos, sizeof(uint32_t));
+                            pos += sizeof(uint32_t);
+                            if (r == local)
+                                break;
+                            pos += len;
+                        }
+
+                        varchar_cum[ci] += len;
+                        std::memcpy(scan.col_data[ci].data() + i * sizeof(uint32_t),
+                                    &varchar_cum[ci],
+                                    sizeof(uint32_t));
+
+                        if (len > 0) {
+                            scan.col_data[ci].insert(scan.col_data[ci].end(),
+                                                     b->col_data[ci].data() + pos,
+                                                     b->col_data[ci].data() + pos + len);
+                        }
+                    }
+                    else {
+                        size_t es = column_elem_size(ct);
+                        std::memcpy(scan.col_data[ci].data() + i * es,
+                                    b->col_data[ci].data() + local * es,
+                                    es);
+                    }
+                }
+                return true;
+            };
+
+            PendingBatch *active = active_batch_.load(std::memory_order_acquire);
+            if (active && read_from_batch(active))
+                continue;
+
+            auto *self = const_cast<Table *>(this);
+            std::unique_lock pool_lock(self->pool_mtx_);
+            bool found = false;
+            for (auto &b : self->flush_queue_) {
+                if (read_from_batch(b.get())) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                // If STILL not found, we must just write 0/null to avoid crash
+                for (size_t ci : col_indices) {
+                    ColumnType ct = schema_.columns[ci];
+                    if (ct == ColumnType::kVarChar) {
+                        std::memcpy(scan.col_data[ci].data() + i * sizeof(uint32_t),
+                                    &varchar_cum[ci],
+                                    sizeof(uint32_t));
+                    }
+                    else {
+                        size_t es = column_elem_size(ct);
+                        std::memset(scan.col_data[ci].data() + i * es, 0, es);
+                    }
+                }
+            }
+            continue;
+        }
         size_t local = static_cast<size_t>(rid - it->start);
 
         if (it->page_id != cached_pid) {
@@ -78,14 +151,22 @@ auto Table::read_rows(const std::vector<RowId> &row_ids,
         auto *metas = reinterpret_cast<const ColMeta *>(bh + 1);
 
         for (size_t ci : col_indices) {
-            const std::byte *src = payload + metas[ci].data_off;
             ColumnType ct = schema_.columns[ci];
+            bool missing = (ci >= bh->col_count);
+            const std::byte *src = missing ? nullptr : payload + metas[ci].data_off;
 
             if (ct == ColumnType::kVarChar) {
-                auto *page_offs =
-                    reinterpret_cast<const uint32_t *>(static_cast<const void *>(src));
-                uint32_t prev = (local == 0) ? 0 : page_offs[local - 1];
-                uint32_t end = page_offs[local];
+                uint32_t prev = 0;
+                uint32_t end = 0;
+                size_t off_bytes = bh->row_count * sizeof(uint32_t);
+
+                if (!missing && metas[ci].data_size > off_bytes) {
+                    auto *page_offs =
+                        reinterpret_cast<const uint32_t *>(static_cast<const void *>(src));
+                    prev = (local == 0) ? 0 : page_offs[local - 1];
+                    end = page_offs[local];
+                }
+
                 uint32_t len = end - prev;
 
                 varchar_cum[ci] += len;
@@ -93,12 +174,19 @@ auto Table::read_rows(const std::vector<RowId> &row_ids,
                             &varchar_cum[ci],
                             sizeof(uint32_t));
 
-                const std::byte *blob_src = src + bh->row_count * sizeof(uint32_t) + prev;
-                scan.col_data[ci].insert(scan.col_data[ci].end(), blob_src, blob_src + len);
+                if (len > 0) {
+                    const std::byte *blob_src = src + off_bytes + prev;
+                    scan.col_data[ci].insert(scan.col_data[ci].end(), blob_src, blob_src + len);
+                }
             }
             else {
                 size_t es = column_elem_size(ct);
-                std::memcpy(scan.col_data[ci].data() + i * es, src + local * es, es);
+                if (missing) {
+                    std::memset(scan.col_data[ci].data() + i * es, 0, es);
+                }
+                else {
+                    std::memcpy(scan.col_data[ci].data() + i * es, src + local * es, es);
+                }
             }
         }
     }
@@ -115,7 +203,6 @@ auto Table::read_rows(const std::vector<RowId> &row_ids,
 
 auto Table::read_page_header(PageId page_id) const -> StatusOr<PageHeader>
 {
-    std::shared_lock lock(*rw_mtx);
     if (page_id + PageHeader::kSize > file_.size()) {
         return std::unexpected(Status::kNotFound);
     }
@@ -125,7 +212,6 @@ auto Table::read_page_header(PageId page_id) const -> StatusOr<PageHeader>
 
 auto Table::read_page(PageId page_id) const -> StatusOr<std::vector<std::byte>>
 {
-    std::shared_lock lock(*rw_mtx);
     if (page_id + PageHeader::kSize > file_.size()) {
         return std::unexpected(Status::kNotFound);
     }

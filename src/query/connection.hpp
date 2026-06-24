@@ -13,12 +13,13 @@ namespace rawdb
 class Connection
 {
 public:
-    explicit Connection(Database& db) : db_(db) {}
+    explicit Connection(Database &db) : db_(db) {}
 
-    auto db() -> Database& { return db_; }
-    auto txn() -> std::shared_ptr<Transaction>& { return txn_; }
+    auto db() -> Database & { return db_; }
+    auto txn() -> std::shared_ptr<Transaction> & { return txn_; }
 
-    auto begin() -> Status {
+    auto begin() -> Status
+    {
         if (txn_) {
             return Status::kInvalidArgument; // Already in a transaction
         }
@@ -26,7 +27,8 @@ public:
         return Status::kOk;
     }
 
-    auto commit() -> Status {
+    auto commit() -> Status
+    {
         if (!txn_) {
             return Status::kInvalidArgument; // Not in a transaction
         }
@@ -35,7 +37,8 @@ public:
         return st;
     }
 
-    auto rollback() -> Status {
+    auto rollback() -> Status
+    {
         if (!txn_) {
             return Status::kInvalidArgument;
         }
@@ -45,7 +48,7 @@ public:
     }
 
 private:
-    Database& db_;
+    Database &db_;
     std::shared_ptr<Transaction> txn_;
 };
 

@@ -113,6 +113,8 @@ add_rawdb_test(executor_test tests/unit/executor_test.cpp)
 add_rawdb_test(capi_test tests/unit/capi_test.cpp)
 add_rawdb_test(btree_test tests/unit/btree_test.cpp)
 add_rawdb_test(concurrency_test tests/unit/concurrency_test.cpp)
+add_rawdb_test(backup_test tests/unit/backup_test.cpp)
+add_rawdb_test(pitr_test tests/unit/pitr_test.cpp)
 
 # Benchmarks
 add_rawdb_bench(mmap tests/bench/mmap_bench.cpp)
@@ -120,6 +122,18 @@ add_rawdb_bench(sql tests/bench/sql_bench.cpp)
 
 add_executable(stress_test tests/bench/stress_test.cpp)
 target_link_libraries(stress_test PRIVATE rawdb)
+
+add_executable(backup_stress_test tests/bench/backup_stress_test.cpp)
+target_link_libraries(backup_stress_test PRIVATE rawdb)
+
+add_executable(mutate_stress_test tests/bench/mutate_stress_test.cpp)
+target_link_libraries(mutate_stress_test PRIVATE rawdb)
+
+add_executable(vacuum_stress_test tests/bench/vacuum_stress_test.cpp)
+target_link_libraries(vacuum_stress_test PRIVATE rawdb)
+
+add_executable(recovery_stress_test tests/bench/recovery_stress_test.cpp)
+target_link_libraries(recovery_stress_test PRIVATE rawdb)
 
 # ──────────────────────────────────────────────
 # CLI Executable
@@ -136,11 +150,11 @@ rawdb_set_strict_options(rawdb_cli)
 # ──────────────────────────────────────────────
 # Python Bindings
 # ──────────────────────────────────────────────
-pybind11_add_module(rawdb_ext MODULE python/rawdb_python.cpp)
-set_target_properties(rawdb_ext PROPERTIES OUTPUT_NAME "rawdb")
-target_link_libraries(rawdb_ext PRIVATE rawdb)
-target_include_directories(rawdb_ext PRIVATE src)
-rawdb_set_strict_options(rawdb_ext)
+# pybind11_add_module(rawdb_ext MODULE python/rawdb_python.cpp)
+# set_target_properties(rawdb_ext PROPERTIES OUTPUT_NAME "rawdb")
+# target_link_libraries(rawdb_ext PRIVATE rawdb)
+# target_include_directories(rawdb_ext PRIVATE src)
+# rawdb_set_strict_options(rawdb_ext)
 
 # ──────────────────────────────────────────────
 # Custom targets

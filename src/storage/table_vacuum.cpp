@@ -20,9 +20,9 @@ auto Table::vacuum(TimestampAllocator &timestamps) -> StatusOr<size_t>
 {
     std::vector<RowId> alive;
     size_t new_rc = 0;
-    
+
     flush_pending();
-    
+
     {
         std::unique_lock lock(*rw_mtx);
 

@@ -60,7 +60,8 @@ static auto run_sql_benchmarks(size_t kRowCount) -> void
             exec.execute("BEGIN");
             std::string sql = "INSERT INTO t VALUES ";
             for (size_t j = 0; j < kBatchSize && (i + j) < kRowCount; ++j) {
-                if (j > 0) sql += ", ";
+                if (j > 0)
+                    sql += ", ";
                 sql += "(" + std::to_string(static_cast<int64_t>(i + j)) + ")";
             }
             auto r = exec.execute(sql);

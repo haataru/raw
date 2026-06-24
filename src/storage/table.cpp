@@ -4,15 +4,14 @@
 #include <cstring>
 #include <fstream>
 
+#include "buffer/flush_handler.hpp"
 #include "core/config.hpp"
 #include "query/executor.hpp"
-#include "buffer/flush_handler.hpp"
 
 namespace rawdb
 {
 
-Table::Table(std::string name, Schema schema)
-    : name_(std::move(name)), schema_(std::move(schema))
+Table::Table(std::string name, Schema schema) : name_(std::move(name)), schema_(std::move(schema))
 {
     init_batches();
 }
@@ -44,15 +43,16 @@ auto Table::operator=(Table &&other) noexcept -> Table &
         file_ = std::move(other.file_);
         file_open_ = other.file_open_;
         version_index_ = std::move(other.version_index_);
-        current_lsn_.store(other.current_lsn_.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        current_lsn_.store(other.current_lsn_.load(std::memory_order_relaxed),
+                           std::memory_order_relaxed);
         pages_ = std::move(other.pages_);
         indexes_ = std::move(other.indexes_);
-        
+
         active_batch_.store(other.active_batch_.load());
         other.active_batch_.store(nullptr);
         free_batches_ = std::move(other.free_batches_);
         flush_queue_ = std::move(other.flush_queue_);
-        
+
         rw_mtx = std::move(other.rw_mtx);
     }
     return *this;
@@ -78,7 +78,8 @@ auto Table::get_free_batch() -> std::unique_ptr<PendingBatch>
 
 void Table::return_free_batch(std::unique_ptr<PendingBatch> batch)
 {
-    for (auto& cd : batch->col_data) cd.clear();
+    for (auto &cd : batch->col_data)
+        cd.clear();
     batch->row_ts.clear();
     batch->row_count = 0;
 
@@ -91,7 +92,7 @@ void Table::return_free_batch(std::unique_ptr<PendingBatch> batch)
 void Table::push_flush_queue(std::unique_ptr<PendingBatch> batch)
 {
     std::unique_lock lock(pool_mtx_);
-    flush_queue_.push(std::move(batch));
+    flush_queue_.push_back(std::move(batch));
     lock.unlock();
     if (flush_handler_) {
         flush_handler_->signal();
@@ -101,16 +102,14 @@ void Table::push_flush_queue(std::unique_ptr<PendingBatch> batch)
 auto Table::pop_flush_queue() -> std::unique_ptr<PendingBatch>
 {
     std::unique_lock lock(pool_mtx_);
-    if (flush_queue_.empty()) return nullptr;
+    if (flush_queue_.empty())
+        return nullptr;
     auto batch = std::move(flush_queue_.front());
-    flush_queue_.pop();
+    flush_queue_.pop_front();
     return batch;
 }
 
-auto Table::row_count() const -> size_t
-{
-    return row_count_.load(std::memory_order_acquire);
-}
+auto Table::row_count() const -> size_t { return row_count_.load(std::memory_order_acquire); }
 
 auto Table::insert_row(Timestamp ts, const std::vector<ColumnData> &columns) -> StatusOr<RowId>
 {
@@ -120,17 +119,21 @@ auto Table::insert_row(Timestamp ts, const std::vector<ColumnData> &columns) -> 
 
     std::shared_lock rw_lock(*rw_mtx);
 
-    PendingBatch* active;
+    PendingBatch *active;
     while (true) {
         active = active_batch_.load(std::memory_order_acquire);
         if (!active) {
             rw_lock.unlock();
             auto new_batch = get_free_batch();
             rw_lock.lock();
-            PendingBatch* expected = nullptr;
-            if (active_batch_.compare_exchange_strong(expected, new_batch.get(), std::memory_order_release, std::memory_order_acquire)) {
+            PendingBatch *expected = nullptr;
+            if (active_batch_.compare_exchange_strong(expected,
+                                                      new_batch.get(),
+                                                      std::memory_order_release,
+                                                      std::memory_order_acquire)) {
                 new_batch.release();
-            } else {
+            }
+            else {
                 return_free_batch(std::move(new_batch));
             }
             continue;
@@ -147,18 +150,20 @@ auto Table::insert_row(Timestamp ts, const std::vector<ColumnData> &columns) -> 
 
         RowId inserted_rid = active->start_rid + active->row_count;
         active->row_ts.push_back(ts);
-        
+
         for (size_t i = 0; i < columns.size(); ++i) {
             auto *src = static_cast<const std::byte *>(columns[i].data);
             active->col_data[i].insert(active->col_data[i].end(), src, src + columns[i].size);
         }
-        
+
         ++active->row_count;
         row_count_.fetch_add(1, std::memory_order_release);
 
         if (active->row_count >= kBatchSize || active->row_count >= config::kMaxPendingRows) {
-            PendingBatch* expected = active;
-            if (active_batch_.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel)) {
+            PendingBatch *expected = active;
+            if (active_batch_.compare_exchange_strong(expected,
+                                                      nullptr,
+                                                      std::memory_order_acq_rel)) {
                 std::unique_ptr<PendingBatch> full_batch(active);
                 push_flush_queue(std::move(full_batch));
             }
@@ -177,17 +182,21 @@ auto Table::insert_row(TimestampAllocator &timestamps,
 
     std::shared_lock rw_lock(*rw_mtx);
 
-    PendingBatch* active;
+    PendingBatch *active;
     while (true) {
         active = active_batch_.load(std::memory_order_acquire);
         if (!active) {
             rw_lock.unlock();
             auto new_batch = get_free_batch();
             rw_lock.lock();
-            PendingBatch* expected = nullptr;
-            if (active_batch_.compare_exchange_strong(expected, new_batch.get(), std::memory_order_release, std::memory_order_acquire)) {
+            PendingBatch *expected = nullptr;
+            if (active_batch_.compare_exchange_strong(expected,
+                                                      new_batch.get(),
+                                                      std::memory_order_release,
+                                                      std::memory_order_acquire)) {
                 new_batch.release();
-            } else {
+            }
+            else {
                 return_free_batch(std::move(new_batch));
             }
             continue;
@@ -205,18 +214,20 @@ auto Table::insert_row(TimestampAllocator &timestamps,
         Timestamp ts = timestamps.allocate_ts();
         RowId inserted_rid = active->start_rid + active->row_count;
         active->row_ts.push_back(ts);
-        
+
         for (size_t i = 0; i < columns.size(); ++i) {
             auto *src = static_cast<const std::byte *>(columns[i].data);
             active->col_data[i].insert(active->col_data[i].end(), src, src + columns[i].size);
         }
-        
+
         ++active->row_count;
         row_count_.fetch_add(1, std::memory_order_release);
 
         if (active->row_count >= kBatchSize || active->row_count >= config::kMaxPendingRows) {
-            PendingBatch* expected = active;
-            if (active_batch_.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel)) {
+            PendingBatch *expected = active;
+            if (active_batch_.compare_exchange_strong(expected,
+                                                      nullptr,
+                                                      std::memory_order_acq_rel)) {
                 std::unique_ptr<PendingBatch> full_batch(active);
                 push_flush_queue(std::move(full_batch));
             }
@@ -226,9 +237,11 @@ auto Table::insert_row(TimestampAllocator &timestamps,
     }
 }
 
-auto Table::insert_rows(Timestamp ts, const std::vector<std::vector<ColumnData>> &rows) -> StatusOr<std::vector<RowId>>
+auto Table::insert_rows(Timestamp ts, const std::vector<std::vector<ColumnData>> &rows)
+    -> StatusOr<std::vector<RowId>>
 {
-    if (rows.empty()) return std::vector<RowId>{};
+    if (rows.empty())
+        return std::vector<RowId>{};
     if (rows[0].size() != schema_.column_count()) {
         return std::unexpected(Status::kInvalidArgument);
     }
@@ -240,17 +253,21 @@ auto Table::insert_rows(Timestamp ts, const std::vector<std::vector<ColumnData>>
     size_t rows_left = rows.size();
     size_t rows_processed = 0;
 
-    PendingBatch* active;
+    PendingBatch *active;
     while (rows_left > 0) {
         active = active_batch_.load(std::memory_order_acquire);
         if (!active) {
             rw_lock.unlock();
             auto new_batch = get_free_batch();
             rw_lock.lock();
-            PendingBatch* expected = nullptr;
-            if (active_batch_.compare_exchange_strong(expected, new_batch.get(), std::memory_order_release, std::memory_order_acquire)) {
+            PendingBatch *expected = nullptr;
+            if (active_batch_.compare_exchange_strong(expected,
+                                                      new_batch.get(),
+                                                      std::memory_order_release,
+                                                      std::memory_order_acquire)) {
                 new_batch.release();
-            } else {
+            }
+            else {
                 return_free_batch(std::move(new_batch));
             }
             continue;
@@ -270,8 +287,10 @@ auto Table::insert_rows(Timestamp ts, const std::vector<std::vector<ColumnData>>
         size_t to_insert = std::min(rows_left, available);
 
         if (to_insert == 0) {
-            PendingBatch* expected = active;
-            if (active_batch_.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel)) {
+            PendingBatch *expected = active;
+            if (active_batch_.compare_exchange_strong(expected,
+                                                      nullptr,
+                                                      std::memory_order_acq_rel)) {
                 std::unique_ptr<PendingBatch> full_batch(active);
                 push_flush_queue(std::move(full_batch));
             }
@@ -282,19 +301,23 @@ auto Table::insert_rows(Timestamp ts, const std::vector<std::vector<ColumnData>>
         for (size_t i = 0; i < to_insert; ++i) {
             results.push_back(start_rid + static_cast<RowId>(i));
             active->row_ts.push_back(ts);
-            
+
             for (size_t c = 0; c < schema_.column_count(); ++c) {
                 auto *src = static_cast<const std::byte *>(rows[rows_processed + i][c].data);
-                active->col_data[c].insert(active->col_data[c].end(), src, src + rows[rows_processed + i][c].size);
+                active->col_data[c].insert(active->col_data[c].end(),
+                                           src,
+                                           src + rows[rows_processed + i][c].size);
             }
         }
-        
+
         active->row_count += static_cast<uint32_t>(to_insert);
         row_count_.fetch_add(to_insert, std::memory_order_release);
-        
+
         if (active->row_count >= kBatchSize || active->row_count >= config::kMaxPendingRows) {
-            PendingBatch* expected = active;
-            if (active_batch_.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel)) {
+            PendingBatch *expected = active;
+            if (active_batch_.compare_exchange_strong(expected,
+                                                      nullptr,
+                                                      std::memory_order_acq_rel)) {
                 std::unique_ptr<PendingBatch> full_batch(active);
                 push_flush_queue(std::move(full_batch));
             }
@@ -303,13 +326,16 @@ auto Table::insert_rows(Timestamp ts, const std::vector<std::vector<ColumnData>>
         rows_processed += to_insert;
         rows_left -= to_insert;
     }
-    
+
     return results;
 }
 
-auto Table::insert_rows(TimestampAllocator &timestamps, const std::vector<std::vector<ColumnData>> &rows) -> StatusOr<std::vector<RowId>>
+auto Table::insert_rows(TimestampAllocator &timestamps,
+                        const std::vector<std::vector<ColumnData>> &rows)
+    -> StatusOr<std::vector<RowId>>
 {
-    if (rows.empty()) return std::vector<RowId>{};
+    if (rows.empty())
+        return std::vector<RowId>{};
     if (rows[0].size() != schema_.column_count()) {
         return std::unexpected(Status::kInvalidArgument);
     }
@@ -321,17 +347,21 @@ auto Table::insert_rows(TimestampAllocator &timestamps, const std::vector<std::v
     size_t rows_left = rows.size();
     size_t rows_processed = 0;
 
-    PendingBatch* active;
+    PendingBatch *active;
     while (rows_left > 0) {
         active = active_batch_.load(std::memory_order_acquire);
         if (!active) {
             rw_lock.unlock();
             auto new_batch = get_free_batch();
             rw_lock.lock();
-            PendingBatch* expected = nullptr;
-            if (active_batch_.compare_exchange_strong(expected, new_batch.get(), std::memory_order_release, std::memory_order_acquire)) {
+            PendingBatch *expected = nullptr;
+            if (active_batch_.compare_exchange_strong(expected,
+                                                      new_batch.get(),
+                                                      std::memory_order_release,
+                                                      std::memory_order_acquire)) {
                 new_batch.release();
-            } else {
+            }
+            else {
                 return_free_batch(std::move(new_batch));
             }
             continue;
@@ -351,8 +381,10 @@ auto Table::insert_rows(TimestampAllocator &timestamps, const std::vector<std::v
         size_t to_insert = std::min(rows_left, available);
 
         if (to_insert == 0) {
-            PendingBatch* expected = active;
-            if (active_batch_.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel)) {
+            PendingBatch *expected = active;
+            if (active_batch_.compare_exchange_strong(expected,
+                                                      nullptr,
+                                                      std::memory_order_acq_rel)) {
                 std::unique_ptr<PendingBatch> full_batch(active);
                 push_flush_queue(std::move(full_batch));
             }
@@ -363,19 +395,23 @@ auto Table::insert_rows(TimestampAllocator &timestamps, const std::vector<std::v
         for (size_t i = 0; i < to_insert; ++i) {
             results.push_back(start_rid + static_cast<RowId>(i));
             active->row_ts.push_back(timestamps.allocate_ts());
-            
+
             for (size_t c = 0; c < schema_.column_count(); ++c) {
                 auto *src = static_cast<const std::byte *>(rows[rows_processed + i][c].data);
-                active->col_data[c].insert(active->col_data[c].end(), src, src + rows[rows_processed + i][c].size);
+                active->col_data[c].insert(active->col_data[c].end(),
+                                           src,
+                                           src + rows[rows_processed + i][c].size);
             }
         }
-        
+
         active->row_count += static_cast<uint32_t>(to_insert);
         row_count_.fetch_add(to_insert, std::memory_order_release);
-        
+
         if (active->row_count >= kBatchSize || active->row_count >= config::kMaxPendingRows) {
-            PendingBatch* expected = active;
-            if (active_batch_.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel)) {
+            PendingBatch *expected = active;
+            if (active_batch_.compare_exchange_strong(expected,
+                                                      nullptr,
+                                                      std::memory_order_acq_rel)) {
                 std::unique_ptr<PendingBatch> full_batch(active);
                 push_flush_queue(std::move(full_batch));
             }
@@ -384,28 +420,30 @@ auto Table::insert_rows(TimestampAllocator &timestamps, const std::vector<std::v
         rows_processed += to_insert;
         rows_left -= to_insert;
     }
-    
+
     return results;
 }
 
 auto Table::flush_pending() -> Status
 {
-    PendingBatch* active;
+    PendingBatch *active;
     std::unique_ptr<PendingBatch> to_flush;
-    
+
     {
         std::shared_lock rw_lock(*rw_mtx);
         active = active_batch_.load(std::memory_order_acquire);
         if (active) {
             std::unique_lock batch_lock(active->mtx);
             if (active == active_batch_.load(std::memory_order_acquire) && active->row_count > 0) {
-                if (active_batch_.compare_exchange_strong(active, nullptr, std::memory_order_acq_rel)) {
+                if (active_batch_.compare_exchange_strong(active,
+                                                          nullptr,
+                                                          std::memory_order_acq_rel)) {
                     to_flush.reset(active);
                 }
             }
         }
     }
-    
+
     if (to_flush) {
         push_flush_queue(std::move(to_flush));
     }
@@ -417,11 +455,11 @@ auto Table::flush_pending() -> Status
         }
         return_free_batch(std::move(batch));
     }
-    
+
     return Status::kOk;
 }
 
-auto Table::write_batch_to_page(PendingBatch* batch) -> Status
+auto Table::write_batch_to_page(PendingBatch *batch) -> Status
 {
     size_t row_count = batch->row_count;
     if (row_count == 0)
@@ -531,7 +569,7 @@ auto Table::write_batch_to_page(PendingBatch* batch) -> Status
     }
     version_index_.insert_bulk(entries.data(), entries.size());
 
-    // msync_sync_safe is intentionally omitted here to prevent blocking. 
+    // msync_sync_safe is intentionally omitted here to prevent blocking.
     // It is called in Table::sync() with a shared_lock.
     return Status::kOk;
 }
@@ -622,16 +660,47 @@ void Table::insert_version_entries(const IndexEntry *entries, size_t count)
     version_index_.insert_bulk(entries, count);
 }
 
-void Table::commit_rows(const std::vector<RowId>& row_ids, TxId tx_id, Timestamp commit_ts)
+void Table::commit_rows(const std::vector<RowId> &row_ids, TxId tx_id, Timestamp commit_ts)
 {
-    std::unique_lock lock(*rw_mtx);
     std::vector<RowId> index_rows;
+    uint64_t target = tx_id | kTxIdFlag;
+
+    // First update active batch
+    {
+        std::shared_lock rw_lock(*rw_mtx);
+        PendingBatch *active = active_batch_.load(std::memory_order_acquire);
+        if (active) {
+            std::unique_lock batch_lock(active->mtx);
+            for (auto rid : row_ids) {
+                if (rid >= active->start_rid && rid < active->start_rid + active->row_count) {
+                    size_t offset = rid - active->start_rid;
+                    if (offset < active->row_ts.size() && active->row_ts[offset] == target) {
+                        active->row_ts[offset] = commit_ts;
+                    }
+                }
+            }
+        }
+    }
+
+    // Next update flush queue
+    {
+        std::unique_lock pool_lock(pool_mtx_);
+        for (auto &batch : flush_queue_) {
+            std::unique_lock batch_lock(batch->mtx);
+            for (auto rid : row_ids) {
+                if (rid >= batch->start_rid && rid < batch->start_rid + batch->row_count) {
+                    size_t offset = rid - batch->start_rid;
+                    if (offset < batch->row_ts.size() && batch->row_ts[offset] == target) {
+                        batch->row_ts[offset] = commit_ts;
+                    }
+                }
+            }
+        }
+    }
+
+    // Finally commit to version index for flushed pages
+    std::unique_lock lock(*rw_mtx);
     for (auto rid : row_ids) {
-        // Look up in active/pending batches is complex now.
-        // It's safer to commit directly in version index if not pending.
-        // For simplicity, we just commit to version_index_.
-        // This is a known limitation in this transition, proper tx management
-        // needs a lookup through all pending batches.
         index_rows.push_back(rid);
     }
     if (!index_rows.empty()) {
@@ -655,6 +724,16 @@ void Table::add_index(IndexInfo info)
 {
     std::unique_lock lock(*rw_mtx);
     indexes_.push_back(std::move(info));
+}
+
+auto Table::get_index_by_col(size_t col_idx) -> BTree *
+{
+    std::shared_lock lock(*rw_mtx);
+    for (auto &idx : indexes_) {
+        if (idx.column_idx == col_idx)
+            return &idx.tree;
+    }
+    return nullptr;
 }
 
 auto Table::save_vindex(const std::filesystem::path &db_path) -> Status

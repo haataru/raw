@@ -98,22 +98,32 @@ auto Executor::execute_select(const SelectStmt &stmt) -> StatusOr<QueryResult>
     else {
         for (const auto &col : stmt.columns) {
             std::string col_name_out;
-            if (col.func == AggFunc::kCount) col_name_out = "COUNT(" + col.name + ")";
-            else if (col.func == AggFunc::kSum) col_name_out = "SUM(" + col.name + ")";
-            else if (col.func == AggFunc::kAvg) col_name_out = "AVG(" + col.name + ")";
-            else if (col.func == AggFunc::kMin) col_name_out = "MIN(" + col.name + ")";
-            else if (col.func == AggFunc::kMax) col_name_out = "MAX(" + col.name + ")";
-            else col_name_out = col.name;
-            
+            if (col.func == AggFunc::kCount)
+                col_name_out = "COUNT(" + col.name + ")";
+            else if (col.func == AggFunc::kSum)
+                col_name_out = "SUM(" + col.name + ")";
+            else if (col.func == AggFunc::kAvg)
+                col_name_out = "AVG(" + col.name + ")";
+            else if (col.func == AggFunc::kMin)
+                col_name_out = "MIN(" + col.name + ")";
+            else if (col.func == AggFunc::kMax)
+                col_name_out = "MAX(" + col.name + ")";
+            else
+                col_name_out = col.name;
+
             result.column_names.push_back(col_name_out);
-            
+
             bool found_type = false;
             for (size_t ci = 0; ci < schema.names.size(); ++ci) {
                 if (schema.names[ci] == col.name) {
-                    // For aggregates, type might change (e.g. COUNT is INT64, SUM is FLOAT64 ideally, but keep it simple)
-                    if (col.func == AggFunc::kCount) result.column_types.push_back(ColumnType::kInt64);
-                    else if (col.func == AggFunc::kAvg || col.func == AggFunc::kSum) result.column_types.push_back(ColumnType::kFloat64);
-                    else result.column_types.push_back(schema.columns[ci]);
+                    // For aggregates, type might change (e.g. COUNT is INT64, SUM is FLOAT64
+                    // ideally, but keep it simple)
+                    if (col.func == AggFunc::kCount)
+                        result.column_types.push_back(ColumnType::kInt64);
+                    else if (col.func == AggFunc::kAvg || col.func == AggFunc::kSum)
+                        result.column_types.push_back(ColumnType::kFloat64);
+                    else
+                        result.column_types.push_back(schema.columns[ci]);
                     found_type = true;
                     break;
                 }
@@ -130,12 +140,14 @@ auto Executor::execute_select(const SelectStmt &stmt) -> StatusOr<QueryResult>
         for (size_t ci = 0; ci < schema.names.size(); ++ci) {
             col_indices.push_back(ci);
         }
-    } else {
+    }
+    else {
         for (const auto &col : stmt.columns) {
             if (col.func != AggFunc::kNone) {
                 is_agg = true;
             }
-            if (col.is_star) continue;
+            if (col.is_star)
+                continue;
             for (size_t ci = 0; ci < schema.names.size(); ++ci) {
                 if (schema.names[ci] == col.name) {
                     col_indices.push_back(ci);
@@ -144,7 +156,7 @@ auto Executor::execute_select(const SelectStmt &stmt) -> StatusOr<QueryResult>
             }
         }
     }
-    
+
     std::vector<size_t> group_by_indices;
     for (const auto &gb : stmt.group_by) {
         for (size_t ci = 0; ci < schema.names.size(); ++ci) {
@@ -175,7 +187,8 @@ auto Executor::execute_select(const SelectStmt &stmt) -> StatusOr<QueryResult>
     bool index_used = false;
     TableScanResult full_scan;
 
-    if (!stmt.has_order_by && stmt.has_where && stmt.where->type == ExprNode::Type::kPredicate && stmt.where->pred.op == CmpOp::kEq) {
+    if (!stmt.has_order_by && stmt.has_where && stmt.where->type == ExprNode::Type::kPredicate &&
+        stmt.where->pred.op == CmpOp::kEq) {
         auto index_rids = index_lookup(tbl, stmt.where->pred);
         if (index_rids.has_value()) {
             index_used = true;
@@ -200,7 +213,8 @@ auto Executor::execute_select(const SelectStmt &stmt) -> StatusOr<QueryResult>
 
         std::vector<size_t> matching;
         if (stmt.has_where) {
-            auto filtered = Filter::evaluate(full_scan.columns, schema, row_count, stmt.where.get());
+            auto filtered =
+                Filter::evaluate(full_scan.columns, schema, row_count, stmt.where.get());
             if (!filtered)
                 return std::unexpected(filtered.error());
             matching = std::move(*filtered);
@@ -234,8 +248,10 @@ auto Executor::execute_select(const SelectStmt &stmt) -> StatusOr<QueryResult>
     if (stmt.has_offset && stmt.offset_count > 0 && !is_agg) {
         if (stmt.offset_count >= visible.size()) {
             visible.clear();
-        } else {
-            visible.erase(visible.begin(), visible.begin() + static_cast<ptrdiff_t>(stmt.offset_count));
+        }
+        else {
+            visible.erase(visible.begin(),
+                          visible.begin() + static_cast<ptrdiff_t>(stmt.offset_count));
         }
     }
 
@@ -249,8 +265,10 @@ auto Executor::execute_select(const SelectStmt &stmt) -> StatusOr<QueryResult>
             // Return 1 row with 0/null for aggregates
             std::vector<std::string> row;
             for (const auto &col : stmt.columns) {
-                if (col.func == AggFunc::kCount) row.push_back("0");
-                else row.push_back("0"); // Simplification for empty
+                if (col.func == AggFunc::kCount)
+                    row.push_back("0");
+                else
+                    row.push_back("0"); // Simplification for empty
             }
             result.rows.push_back(std::move(row));
         }
@@ -275,13 +293,15 @@ auto Executor::execute_select(const SelectStmt &stmt) -> StatusOr<QueryResult>
                                                visible.size());
                     row.push_back(std::move(val));
                 }
-            } else {
+            }
+            else {
                 for (const auto &col : stmt.columns) {
                     size_t col_idx = static_cast<size_t>(-1);
                     for (size_t i = 0; i < schema.names.size(); ++i) {
-                        if (schema.names[i] == col.name) col_idx = i;
+                        if (schema.names[i] == col.name)
+                            col_idx = i;
                     }
-                    
+
                     auto val = value_to_string(final_scan->columns[col_idx],
                                                schema.columns[col_idx],
                                                ri,
@@ -291,73 +311,95 @@ auto Executor::execute_select(const SelectStmt &stmt) -> StatusOr<QueryResult>
             }
             result.rows.push_back(std::move(row));
         }
-    } else {
+    }
+    else {
         // Aggregation Logic
-        struct AggState {
+        struct AggState
+        {
             int64_t count{0};
             double sum{0.0};
             double min{std::numeric_limits<double>::max()};
             double max{std::numeric_limits<double>::lowest()};
         };
-        
+
         std::unordered_map<std::string, std::vector<AggState>> groups;
         std::vector<std::string> group_keys_order;
-        
+
         for (size_t ri = 0; ri < visible.size(); ++ri) {
             std::string key = "";
             for (size_t gbi : group_by_indices) {
-                key += value_to_string(final_scan->columns[gbi], schema.columns[gbi], ri, visible.size()) + "|";
+                key += value_to_string(final_scan->columns[gbi],
+                                       schema.columns[gbi],
+                                       ri,
+                                       visible.size()) +
+                       "|";
             }
-            
+
             if (groups.find(key) == groups.end()) {
                 groups[key].resize(stmt.columns.size());
                 group_keys_order.push_back(key);
             }
-            
-            auto& states = groups[key];
+
+            auto &states = groups[key];
             for (size_t ci = 0; ci < stmt.columns.size(); ++ci) {
-                const auto& col = stmt.columns[ci];
+                const auto &col = stmt.columns[ci];
                 states[ci].count++;
-                
+
                 if (col.func != AggFunc::kNone && col.func != AggFunc::kCount) {
                     size_t col_idx = static_cast<size_t>(-1);
                     for (size_t i = 0; i < schema.names.size(); ++i) {
-                        if (schema.names[i] == col.name) col_idx = i;
+                        if (schema.names[i] == col.name)
+                            col_idx = i;
                     }
-                    std::string sval = value_to_string(final_scan->columns[col_idx], schema.columns[col_idx], ri, visible.size());
+                    std::string sval = value_to_string(final_scan->columns[col_idx],
+                                                       schema.columns[col_idx],
+                                                       ri,
+                                                       visible.size());
                     double dval = 0;
                     if (!sval.empty()) {
-                        try { dval = std::stod(sval); } catch (...) {}
+                        try {
+                            dval = std::stod(sval);
+                        }
+                        catch (...) {
+                        }
                     }
                     states[ci].sum += dval;
-                    if (dval < states[ci].min) states[ci].min = dval;
-                    if (dval > states[ci].max) states[ci].max = dval;
+                    if (dval < states[ci].min)
+                        states[ci].min = dval;
+                    if (dval > states[ci].max)
+                        states[ci].max = dval;
                 }
             }
         }
-        
-        for (const auto& key : group_keys_order) {
-            const auto& states = groups[key];
+
+        for (const auto &key : group_keys_order) {
+            const auto &states = groups[key];
             std::vector<std::string> row;
-            // The first few columns might be group_by columns. We need to parse the key or just re-read?
-            // Actually we can just look up the key string, but it's easier to just use the original value if it's a group by column!
-            // Wait, we need to extract the original values.
-            // Let's just do a naive split of the key.
+            // The first few columns might be group_by columns. We need to parse the key or just
+            // re-read? Actually we can just look up the key string, but it's easier to just use the
+            // original value if it's a group by column! Wait, we need to extract the original
+            // values. Let's just do a naive split of the key.
             size_t key_pos = 0;
-            
+
             for (size_t ci = 0; ci < stmt.columns.size(); ++ci) {
-                const auto& col = stmt.columns[ci];
+                const auto &col = stmt.columns[ci];
                 if (col.func == AggFunc::kCount) {
                     row.push_back(std::to_string(states[ci].count));
-                } else if (col.func == AggFunc::kSum) {
+                }
+                else if (col.func == AggFunc::kSum) {
                     row.push_back(std::to_string(states[ci].sum));
-                } else if (col.func == AggFunc::kAvg) {
-                    row.push_back(std::to_string(states[ci].sum / static_cast<double>(states[ci].count)));
-                } else if (col.func == AggFunc::kMin) {
+                }
+                else if (col.func == AggFunc::kAvg) {
+                    row.push_back(
+                        std::to_string(states[ci].sum / static_cast<double>(states[ci].count)));
+                }
+                else if (col.func == AggFunc::kMin) {
                     row.push_back(std::to_string(states[ci].min));
-                } else if (col.func == AggFunc::kMax) {
+                }
+                else if (col.func == AggFunc::kMax) {
                     row.push_back(std::to_string(states[ci].max));
-                } else {
+                }
+                else {
                     // It's a GROUP BY column.
                     size_t next_pipe = key.find('|', key_pos);
                     row.push_back(key.substr(key_pos, next_pipe - key_pos));
@@ -366,12 +408,14 @@ auto Executor::execute_select(const SelectStmt &stmt) -> StatusOr<QueryResult>
             }
             result.rows.push_back(std::move(row));
         }
-        
+
         if (stmt.has_offset && stmt.offset_count > 0) {
             if (stmt.offset_count >= result.rows.size()) {
                 result.rows.clear();
-            } else {
-                result.rows.erase(result.rows.begin(), result.rows.begin() + static_cast<ptrdiff_t>(stmt.offset_count));
+            }
+            else {
+                result.rows.erase(result.rows.begin(),
+                                  result.rows.begin() + static_cast<ptrdiff_t>(stmt.offset_count));
             }
         }
         if (stmt.has_limit && result.rows.size() > stmt.limit_count) {
@@ -394,7 +438,8 @@ auto Executor::execute_join(const SelectStmt &stmt) -> StatusOr<QueryResult>
             break;
         }
     }
-    if (!found_left) return std::unexpected(Status::kNotFound);
+    if (!found_left)
+        return std::unexpected(Status::kNotFound);
 
     // Find Right Table
     TableId tid_right = 0;
@@ -406,7 +451,8 @@ auto Executor::execute_join(const SelectStmt &stmt) -> StatusOr<QueryResult>
             break;
         }
     }
-    if (!found_right) return std::unexpected(Status::kNotFound);
+    if (!found_right)
+        return std::unexpected(Status::kNotFound);
 
     auto &tbl_left = conn_.db().table(tid_left);
     auto &tbl_right = conn_.db().table(tid_right);
@@ -421,8 +467,9 @@ auto Executor::execute_join(const SelectStmt &stmt) -> StatusOr<QueryResult>
     size_t row_count_right = tbl_right.row_count();
 
     QueryResult result;
-    
-    struct ColMapping {
+
+    struct ColMapping
+    {
         bool is_left;
         size_t idx;
     };
@@ -435,11 +482,13 @@ auto Executor::execute_join(const SelectStmt &stmt) -> StatusOr<QueryResult>
             output_mapping.push_back({true, i});
         }
         for (size_t i = 0; i < schema_right.names.size(); ++i) {
-            result.column_names.push_back(stmt.join_clause.table_name + "." + schema_right.names[i]);
+            result.column_names.push_back(stmt.join_clause.table_name + "." +
+                                          schema_right.names[i]);
             result.column_types.push_back(schema_right.columns[i]);
             output_mapping.push_back({false, i});
         }
-    } else {
+    }
+    else {
         for (const auto &col : stmt.columns) {
             std::string col_name = col.name;
             size_t left_idx = static_cast<size_t>(-1);
@@ -460,15 +509,20 @@ auto Executor::execute_join(const SelectStmt &stmt) -> StatusOr<QueryResult>
 
             if (left_idx != static_cast<size_t>(-1) && right_idx != static_cast<size_t>(-1)) {
                 return std::unexpected(Status::kInvalidArgument); // Ambiguous column reference
-            } else if (left_idx != static_cast<size_t>(-1)) {
-                result.column_names.push_back(col.table.empty() ? col_name : col.table + "." + col_name);
+            }
+            else if (left_idx != static_cast<size_t>(-1)) {
+                result.column_names.push_back(col.table.empty() ? col_name
+                                                                : col.table + "." + col_name);
                 result.column_types.push_back(schema_left.columns[left_idx]);
                 output_mapping.push_back({true, left_idx});
-            } else if (right_idx != static_cast<size_t>(-1)) {
-                result.column_names.push_back(col.table.empty() ? col_name : col.table + "." + col_name);
+            }
+            else if (right_idx != static_cast<size_t>(-1)) {
+                result.column_names.push_back(col.table.empty() ? col_name
+                                                                : col.table + "." + col_name);
                 result.column_types.push_back(schema_right.columns[right_idx]);
                 output_mapping.push_back({false, right_idx});
-            } else {
+            }
+            else {
                 return std::unexpected(Status::kNotFound);
             }
         }
@@ -480,18 +534,22 @@ auto Executor::execute_join(const SelectStmt &stmt) -> StatusOr<QueryResult>
 
         if (col.table.empty() || col.table == stmt.table_name) {
             auto it = std::find(schema_left.names.begin(), schema_left.names.end(), col.name);
-            if (it != schema_left.names.end()) left_idx = static_cast<size_t>(std::distance(schema_left.names.begin(), it));
+            if (it != schema_left.names.end())
+                left_idx = static_cast<size_t>(std::distance(schema_left.names.begin(), it));
         }
         if (col.table.empty() || col.table == stmt.join_clause.table_name) {
             auto it = std::find(schema_right.names.begin(), schema_right.names.end(), col.name);
-            if (it != schema_right.names.end()) right_idx = static_cast<size_t>(std::distance(schema_right.names.begin(), it));
+            if (it != schema_right.names.end())
+                right_idx = static_cast<size_t>(std::distance(schema_right.names.begin(), it));
         }
 
         if (left_idx != static_cast<size_t>(-1) && right_idx != static_cast<size_t>(-1)) {
             return {false, static_cast<size_t>(-1)}; // Ambiguous
-        } else if (left_idx != static_cast<size_t>(-1)) {
+        }
+        else if (left_idx != static_cast<size_t>(-1)) {
             return {true, left_idx};
-        } else if (right_idx != static_cast<size_t>(-1)) {
+        }
+        else if (right_idx != static_cast<size_t>(-1)) {
             return {false, right_idx};
         }
         return {false, static_cast<size_t>(-1)};
@@ -511,46 +569,65 @@ auto Executor::execute_join(const SelectStmt &stmt) -> StatusOr<QueryResult>
     size_t join_col_right_idx = !left_res.first ? left_res.second : right_res.second;
 
     std::vector<size_t> all_left;
-    for (size_t i = 0; i < schema_left.columns.size(); ++i) all_left.push_back(i);
+    for (size_t i = 0; i < schema_left.columns.size(); ++i)
+        all_left.push_back(i);
     std::vector<size_t> all_right;
-    for (size_t i = 0; i < schema_right.columns.size(); ++i) all_right.push_back(i);
+    for (size_t i = 0; i < schema_right.columns.size(); ++i)
+        all_right.push_back(i);
 
     std::vector<RowId> left_visible;
     for (size_t ri = 0; ri < row_count_left; ++ri) {
         auto r = tbl_left.search_version_index(static_cast<RowId>(ri), read_ts);
-        if (r && *r != Table::kNotFoundPage) left_visible.push_back(static_cast<RowId>(ri));
+        if (r && *r != Table::kNotFoundPage)
+            left_visible.push_back(static_cast<RowId>(ri));
     }
-    
+
     std::vector<RowId> right_visible;
     for (size_t ri = 0; ri < row_count_right; ++ri) {
         auto r = tbl_right.search_version_index(static_cast<RowId>(ri), read_ts);
-        if (r && *r != Table::kNotFoundPage) right_visible.push_back(static_cast<RowId>(ri));
+        if (r && *r != Table::kNotFoundPage)
+            right_visible.push_back(static_cast<RowId>(ri));
     }
 
     auto scan_left = tbl_left.read_rows(left_visible, all_left);
-    if (!scan_left) return std::unexpected(scan_left.error());
+    if (!scan_left)
+        return std::unexpected(scan_left.error());
     auto scan_right = tbl_right.read_rows(right_visible, all_right);
-    if (!scan_right) return std::unexpected(scan_right.error());
+    if (!scan_right)
+        return std::unexpected(scan_right.error());
 
     std::unordered_multimap<std::string, size_t> hash_table;
     for (size_t k = 0; k < right_visible.size(); ++k) {
-        std::string val = value_to_string(scan_right->columns[join_col_right_idx], schema_right.columns[join_col_right_idx], k, right_visible.size());
+        std::string val = value_to_string(scan_right->columns[join_col_right_idx],
+                                          schema_right.columns[join_col_right_idx],
+                                          k,
+                                          right_visible.size());
         hash_table.insert({val, k});
     }
 
     for (size_t k_left = 0; k_left < left_visible.size(); ++k_left) {
-        std::string val_left = value_to_string(scan_left->columns[join_col_left_idx], schema_left.columns[join_col_left_idx], k_left, left_visible.size());
-        
+        std::string val_left = value_to_string(scan_left->columns[join_col_left_idx],
+                                               schema_left.columns[join_col_left_idx],
+                                               k_left,
+                                               left_visible.size());
+
         auto range = hash_table.equal_range(val_left);
         for (auto it = range.first; it != range.second; ++it) {
             size_t k_right = it->second;
-            
+
             std::vector<std::string> row_out;
             for (auto map : output_mapping) {
                 if (map.is_left) {
-                    row_out.push_back(value_to_string(scan_left->columns[map.idx], schema_left.columns[map.idx], k_left, left_visible.size()));
-                } else {
-                    row_out.push_back(value_to_string(scan_right->columns[map.idx], schema_right.columns[map.idx], k_right, right_visible.size()));
+                    row_out.push_back(value_to_string(scan_left->columns[map.idx],
+                                                      schema_left.columns[map.idx],
+                                                      k_left,
+                                                      left_visible.size()));
+                }
+                else {
+                    row_out.push_back(value_to_string(scan_right->columns[map.idx],
+                                                      schema_right.columns[map.idx],
+                                                      k_right,
+                                                      right_visible.size()));
                 }
             }
             result.rows.push_back(std::move(row_out));
@@ -560,8 +637,10 @@ auto Executor::execute_join(const SelectStmt &stmt) -> StatusOr<QueryResult>
     if (stmt.has_offset && stmt.offset_count > 0) {
         if (stmt.offset_count >= result.rows.size()) {
             result.rows.clear();
-        } else {
-            result.rows.erase(result.rows.begin(), result.rows.begin() + static_cast<ptrdiff_t>(stmt.offset_count));
+        }
+        else {
+            result.rows.erase(result.rows.begin(),
+                              result.rows.begin() + static_cast<ptrdiff_t>(stmt.offset_count));
         }
     }
     if (stmt.has_limit && result.rows.size() > stmt.limit_count) {
